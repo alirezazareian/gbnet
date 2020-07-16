@@ -1,7 +1,7 @@
 attrs==19.3.0
 awscli==1.15.84
 backcall==0.1.0
-bleach==3.1.0
+bleach==3.1.4
 certifi==2019.9.11
 cffi==1.13.1
 cycler==0.10.0
