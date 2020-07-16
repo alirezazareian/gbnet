@@ -1,18 +1,30 @@
 # Graph Bridging Network (GB-Net)
 Code for the ECCV 2020 paper: [Bridging Knowledge Graphs to Generate Scene Graphs](https://arxiv.org/pdf/2001.02314.pdf)
+```
+@InProceedings{Zareian_2020_ECCV,
+author = {Zareian, Alireza and Karaman, Svebor and Chang, Shih-Fu},
+title = {Bridging Knowledge Graphs to Generate Scene Graphs},
+booktitle = {Proceedings of the European conference on computer vision (ECCV)},
+month = {August},
+year = {2020}
+}
+```
 
 Instructions to reproduce all numbers in table 1 and table 2 of our paper:
 
 First, download and unpack Visual Genome images: [part 2](https://cs.stanford.edu/people/rak248/VG_100K_2/images.zip) and [part 2](https://cs.stanford.edu/people/rak248/VG_100K_2/images2.zip)
+
 Extract these two zip files and put the images in the same folder.
+
 Then download VG metadata preprocessed by \[37\]: [annotations](http://svl.stanford.edu/projects/scene-graph/dataset/VG-SGG.h5), [class info](http://svl.stanford.edu/projects/scene-graph/dataset/VG-SGG-dicts.json),and [image metadata](http://svl.stanford.edu/projects/scene-graph/VG/image_data.json)
+
 Copy those three files in a single folder
 
-Then update config.py to with a path to the aforementioned data, as well as the absolute path to this directory.
+Then update `config.py` to with a path to the aforementioned data, as well as the absolute path to this directory.
 
-Now download the pretrained faster r-cnn checkpoint trained by [42] from https://www.dropbox.com/s/cfyqhskypu7tp0q/vg-24.tar?dl=0 and place in checkpoints/vgdet
+Now download the pretrained faster r-cnn checkpoint trained by [42] from https://www.dropbox.com/s/cfyqhskypu7tp0q/vg-24.tar?dl=0 and place in `checkpoints/vgdet`
 
-The next step is to configure a python environment and install pytorch. To do that, first make sure CUDA 9 is installed, and then download https://download.pytorch.org/whl/cu90/torch-0.3.0.post4-cp36-cp36m-linux_x86_64.whl and pip install the downloaded whl file. Then install the rest of required packages by running pip install -r requirements.txt. This includes jupyter, as you need it to run the notebooks.
+The next step is to configure a python environment and install pytorch. To do that, first make sure CUDA 9 is installed, and then download https://download.pytorch.org/whl/cu90/torch-0.3.0.post4-cp36-cp36m-linux_x86_64.whl and pip install the downloaded `whl` file. Then install the rest of required packages by running `pip install -r requirements.txt`. This includes jupyter, as you need it to run the notebooks.
 
 Finally, run the following to produce numbers for each table (In some cases order matters):
 ```
@@ -57,7 +69,9 @@ Also note that pytorch 0.3.0 only has pre-built binaries for up to cuda 9. In or
 Acknowledgement: This repository is based on our references [\[1\]](https://github.com/yuweihao/KERN) and [\[42\]](https://github.com/rowanz/neural-motifs)
 
 [1] Chen, Tianshui, et al. "Knowledge-Embedded Routing Network for Scene Graph Generation." Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition. 2019.
+
 [37] Xu, Danfei, et al. "Scene graph generation by iterative message passing." Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition. 2017.
+
 [42] Zellers, Rowan, et al. "Neural motifs: Scene graph parsing with global context." Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition. 2018.
 
 Created and maintained by [Alireza Zareian](https://www.linkedin.com/in/az2407/) at [DVMM](http://www.ee.columbia.edu/ln/dvmm/) - Columbia University.
