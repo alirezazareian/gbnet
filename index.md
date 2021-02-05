@@ -1,37 +1,44 @@
-## Welcome to GitHub Pages
+## Bridging Knowledge Graphs to Generate Scene Graphs
 
-You can use the [editor on GitHub](https://github.com/alirezazareian/gbnet/edit/gh-pages/index.md) to maintain and preview the content for your website in Markdown files.
+[Alireza Zareian](https://www.linkedin.com/in/az2407/), &nbsp; &nbsp; &nbsp; &nbsp; 
+[Svebor Karaman](http://www.sveborkaraman.com/), &nbsp; &nbsp; &nbsp; &nbsp; 
+[Shih-Fu Chang](https://www.ee.columbia.edu/~sfchang/)
 
-Whenever you commit to this repository, GitHub Pages will run [Jekyll](https://jekyllrb.com/) to rebuild the pages in your site, from the content in your Markdown files.
+[Digital Video and Multimedia - Columbia University](https://www.ee.columbia.edu/ln/dvmm/)
 
-### Markdown
+A machine learning framework for more powerful image understanding by incorporating common sense knowledge.
 
-Markdown is a lightweight and easy-to-use syntax for styling your writing. It includes conventions for
+Published and presented at ECCV 2020 (European Conference on Computer Vision).
 
-```markdown
-Syntax highlighted code block
+<a href="https://link.springer.com/chapter/10.1007/978-3-030-58592-1_36"><button>View Proceedings</button></a>
+&nbsp; &nbsp; &nbsp; &nbsp; 
+<a href="https://arxiv.org/abs/2001.02314"><button>Read on arXiv</button></a>
+&nbsp; &nbsp; &nbsp; &nbsp; 
+<a href="https://www.youtube.com/watch?v=wGPWYD1vU98"><button>Watch the Talk</button></a>
 
-# Header 1
-## Header 2
-### Header 3
+### Abstract
 
-- Bulleted
-- List
+Scene graphs are powerful representations that parse images into their abstract semantic elements, i.e., objects and their interactions, which facilitates visual comprehension and explainable reasoning. On the other hand, commonsense knowledge graphs are rich repositories that encode how the world is structured, and how general concepts interact. In this paper, we present a unified formulation of these two constructs, where a scene graph is seen as an image-conditioned instantiation of a commonsense knowledge graph. Based on this new perspective, we re-formulate scene graph generation as the inference of a bridge between the scene and commonsense graphs, where each entity or predicate instance in the scene graph has to be linked to its corresponding entity or predicate class in the commonsense graph. To this end, we propose a novel graph-based neural network that iteratively propagates information between the two graphs, as well as within each of them, while gradually refining their bridge in each iteration. Our Graph Bridging Network, GB-Net, successively infers edges and nodes, allowing to simultaneously exploit and refine the rich, heterogeneous structure of the interconnected scene and commonsense graphs. Through extensive experimentation, we showcase the superior accuracy of GB-Net compared to the most recent methods, resulting in a new state of the art. We publicly release the source code of our method.
 
-1. Numbered
-2. List
-
-**Bold** and _Italic_ and `Code` text
-
-[Link](url) and ![Image](src)
+### Citation:
+```
+@InProceedings{Zareian_2020_CVPR,
+author = {Zareian, Alireza and Karaman, Svebor and Chang, Shih-Fu},
+title = {Weakly Supervised Visual Semantic Parsing},
+booktitle = {IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+month = {June},
+year = {2020}
+}
 ```
 
-For more details see [GitHub Flavored Markdown](https://guides.github.com/features/mastering-markdown/).
+### Quick Overview:
 
-### Jekyll Themes
+![Method](gbnet-method.png)
 
-Your Pages site will use the layout and styles from the Jekyll theme you have selected in your [repository settings](https://github.com/alirezazareian/gbnet/settings). The name of this theme is saved in the Jekyll `_config.yml` configuration file.
+Given an input image, we first initialize a scene graph using a Faster R-CNN and ground the entity nodes via bridging edges on the external knowledge graph. Then we propagate messages to update node representations, and use them to update the entity and predicate bridges. This is repeated T times and the final bridge determines the output label of each node.
 
-### Support or Contact
+### Oral Talk:
 
-Having trouble with Pages? Check out our [documentation](https://docs.github.com/categories/github-pages-basics/) or [contact support](https://support.github.com/contact) and we’ll help you sort it out.
+[<img src="https://i.ytimg.com/vi/wGPWYD1vU98/hqdefault.jpg">](https://www.youtube.com/watch?v=wGPWYD1vU98)
+
+
