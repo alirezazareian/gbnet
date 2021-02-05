@@ -1,4 +1,4 @@
-## Bridging Knowledge Graphs <br/> to Generate Scene Graphs
+# Bridging Knowledge Graphs <br/> to Generate Scene Graphs
 
 [Alireza Zareian](https://www.linkedin.com/in/az2407/), &nbsp; &nbsp; &nbsp; &nbsp; 
 [Svebor Karaman](http://www.sveborkaraman.com/), &nbsp; &nbsp; &nbsp; &nbsp; 
