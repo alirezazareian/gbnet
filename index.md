@@ -22,12 +22,13 @@ Scene graphs are powerful representations that parse images into their abstract 
 
 ### Citation:
 ```
-@InProceedings{Zareian_2020_CVPR,
-author = {Zareian, Alireza and Karaman, Svebor and Chang, Shih-Fu},
-title = {Weakly Supervised Visual Semantic Parsing},
-booktitle = {IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
-month = {June},
-year = {2020}
+@inproceedings{zareian2020bridging,
+  title={Bridging knowledge graphs to generate scene graphs},
+  author={Zareian, Alireza and Karaman, Svebor and Chang, Shih-Fu},
+  booktitle={European Conference on Computer Vision},
+  pages={606--623},
+  year={2020},
+  organization={Springer}
 }
 ```
 
