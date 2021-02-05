@@ -1,1 +1,5 @@
 theme: jekyll-theme-minimal
+title: GB-Net
+description: ECCV 2020 Paper
+logo: https://raw.githubusercontent.com/alirezazareian/gbnet/gh-pages/gbnet-logo.png
+show_downloads: true
