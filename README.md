@@ -59,7 +59,7 @@ Row 4: train: ipynb/train_predcls/0142.ipynb, evaluate: ipynb/eval_predcls/0037.
 
 To skip training, you may download all our pretrained checkpoints from [here](https://www.dropbox.com/sh/r62mzgsg1f81776/AAAQKzPD8qJrBYeYzNHJ0p5Xa?dl=0) and place in the `checkpoints/` folder. Then you only need to run notebooks in `ipynb/eval_...`
 
-If GPU is not available, to skip deploying the model altogether, you may download our pre-computed model outputs from [here](https://www.dropbox.com/sh/3w58g3izlm900tz/AAB5E9oFhg9CeVPKQPpsZj5fa?dl=0) and place in the `caches/` folder. Then if you run any notebook in `ipynb/eval_...`, it automatically uses the cached results and does not deploy the model. Note that there is no need to run the cell that creates the model (`detector = ...`) as well as the next one that transfers it to cuda (`detector.cuda()`) and the next one that loads the checkpoint (`ckpt = ...`). Only run the rest of the cells.
+If GPU is not available, to skip deploying the model altogether, you may download our pre-computed model outputs from [here](https://www.dropbox.com/sh/rbnkcnfh0bmw08m/AACVBegZ14YGG9XwcsmJFxFua?dl=0) and place in the `caches/` folder. Then if you run any notebook in `ipynb/eval_...`, it automatically uses the cached results and does not deploy the model. Note that there is no need to run the cell that creates the model (`detector = ...`) as well as the next one that transfers it to cuda (`detector.cuda()`) and the next one that loads the checkpoint (`ckpt = ...`). Only run the rest of the cells.
 
 Finally, to avoid running the code, you may just open the notebooks in `ipynb/eval_...` and scroll down to see the evaluation results.
 
