@@ -1,7 +1,8 @@
 import os
 import torch
-from torch.utils.ffi import create_extension
-# Might have to export PATH=/usr/local/cuda-8.0/bin${PATH:+:${PATH}}
+from torch.utils.cpp_extension import BuildExtension
+from setuptools import setup
+
 
 sources = []
 headers = []
@@ -20,7 +21,7 @@ print(this_file)
 extra_objects = ['src/cuda/nms.cu.o']
 extra_objects = [os.path.join(this_file, fname) for fname in extra_objects]
 
-ffi = create_extension(
+ffi = BuildExtension(
     '_ext.nms',
     headers=headers,
     sources=sources,
@@ -31,5 +32,21 @@ ffi = create_extension(
 )
 
 if __name__ == '__main__':
-    ffi.build()
-
+    setup(
+        name='_ext.nms',
+        headers=headers,
+        sources=sources,
+        define_macros=defines,
+        relative_to=__file__,
+        with_cuda=with_cuda,
+        extra_objects=extra_objects
+        ext_modules=[
+            CUDAExtension(
+                    name='cuda_extension',
+                    sources=['extension.cpp', 'extension_kernel.cu'],
+                    extra_compile_args={'cxx': ['-g'],
+                                        'nvcc': ['-O2']})
+        ],
+        cmdclass={
+            'build_ext': BuildExtension
+        })
