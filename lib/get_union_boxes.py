@@ -45,12 +45,12 @@ class UnionBoxesAndFeats(Module):
             return union_pools.detach()
 
         pair_rois = torch.cat((rois[:, 1:][union_inds[:, 0]], rois[:, 1:][union_inds[:, 1]]),1).data.cpu().numpy()
-        # rects_np = get_rect_features(pair_rois, self.pooling_size*2-1) - 0.5
         rects_np = draw_union_boxes(pair_rois, self.pooling_size*4-1) - 0.5
-        rects = Variable(torch.FloatTensor(rects_np).cuda(fmap.get_device()), volatile=fmap.volatile)
-        if self.concat:
-            return torch.cat((union_pools, self.conv(rects)), 1)
-        return union_pools + self.conv(rects)
+        rects = Variable(torch.FloatTensor(rects_np).cuda(fmap.get_device()))
+        with torch.no_grad():
+            if self.concat:
+                return torch.cat((union_pools, self.conv(rects)), 1)
+            return union_pools + self.conv(rects)
 
 # def get_rect_features(roi_pairs, pooling_size):
 #     rects_np = draw_union_boxes(roi_pairs, pooling_size)
