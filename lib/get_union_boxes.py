@@ -5,7 +5,7 @@ credits to https://github.com/ruotianluo/pytorch-faster-rcnn/blob/master/lib/net
 import torch
 from torch.autograd import Variable
 from torch.nn import functional as F
-from lib.fpn.roi_align.functions.roi_align import RoIAlignFunction
+from torchvision.ops import roi_align
 from lib.draw_rectangles.draw_rectangles import draw_union_boxes
 import numpy as np
 from torch.nn.modules.module import Module
@@ -21,7 +21,7 @@ class UnionBoxesAndFeats(Module):
         :param concat: Whether to concat (yes) or add (False) the representations
         """
         super(UnionBoxesAndFeats, self).__init__()
-        
+
         self.pooling_size = pooling_size
         self.stride = stride
 
@@ -88,7 +88,7 @@ def union_boxes(fmap, rois, union_inds, pooling_size=14, stride=16):
     ),1)
 
     # (num_rois, d, pooling_size, pooling_size)
-    union_pools = RoIAlignFunction(pooling_size, pooling_size,
-                                   spatial_scale=1/stride)(fmap, union_rois)
+    union_pools = roi_align(fmap, union_rois, [pooling_size, pooling_size], spatial_scale=1/stride)
+    # union_pools = RoIAlignFunction(pooling_size, pooling_size,
+    #                                spatial_scale=1/stride)(fmap, union_rois)
     return union_pools
- 
