@@ -12,7 +12,7 @@ from torch.nn import functional as F
 from torch.nn.utils.rnn import PackedSequence
 from lib.resnet import resnet_l4
 from config import BATCHNORM_MOMENTUM
-from lib.fpn.nms.functions.nms import apply_nms
+from torchvision.ops import nms, roi_align
 
 from lib.fpn.box_utils import bbox_overlaps, center_size
 from lib.get_union_boxes import UnionBoxesAndFeats
@@ -20,7 +20,6 @@ from lib.fpn.proposal_assignments.rel_assignments import rel_assignments
 from lib.object_detector import ObjectDetector, gather_res, load_vgg
 from lib.pytorch_misc import transpose_packed_sequence_inds, onehot_logits, arange, enumerate_by_image, diagonal_inds, Flattener
 from lib.surgery import filter_dets
-from lib.fpn.roi_align.functions.roi_align import RoIAlignFunction
 from lib.my_ggnn_10 import GGNN
 
 np.set_printoptions(threshold=sys.maxsize)
@@ -32,7 +31,7 @@ class GGNNRelReason(nn.Module):
     """
     Module for relationship classification.
     """
-    def __init__(self, graph_path, emb_path, mode='sgdet', num_obj_cls=151, num_rel_cls=51, obj_dim=4096, rel_dim=4096, 
+    def __init__(self, graph_path, emb_path, mode='sgdet', num_obj_cls=151, num_rel_cls=51, obj_dim=4096, rel_dim=4096,
                 time_step_num=3, hidden_dim=512, output_dim=512, use_knowledge=True, use_embedding=True, refine_obj_cls=False):
 
         super(GGNNRelReason, self).__init__()
@@ -48,12 +47,12 @@ class GGNNRelReason(nn.Module):
         self.rel_proj = nn.Linear(self.rel_dim, hidden_dim)
 
         assert not (refine_obj_cls and mode == 'predcls')
-        
-        self.ggnn = GGNN(time_step_num=time_step_num, hidden_dim=hidden_dim, output_dim=output_dim, 
+
+        self.ggnn = GGNN(time_step_num=time_step_num, hidden_dim=hidden_dim, output_dim=output_dim,
                          emb_path=emb_path, graph_path=graph_path, refine_obj_cls=refine_obj_cls,
                          use_knowledge=use_knowledge, use_embedding=use_embedding)
 
-        
+
     def forward(self, im_inds, obj_fmaps, obj_logits, rel_inds, vr, obj_labels=None, boxes_per_cls=None):
         """
         Reason relationship classes using knowledge of object and relationship coccurrence.
@@ -62,52 +61,59 @@ class GGNNRelReason(nn.Module):
         # print(rel_inds.shape)
         # (num_rel, 3)
         if self.mode == 'predcls':
+            #breakpoint()
             obj_logits = Variable(onehot_logits(obj_labels.data, self.num_obj_cls))
         obj_probs = F.softmax(obj_logits, 1)
 
         obj_fmaps = self.obj_proj(obj_fmaps)
         vr = self.rel_proj(vr)
-        
+
         rel_logits = []
         obj_logits_refined = []
-        for (_, obj_s, obj_e), (_, rel_s, rel_e) in zip(enumerate_by_image(im_inds.data), enumerate_by_image(rel_inds[:,0])):        
+        for (_, obj_s, obj_e), (_, rel_s, rel_e) in zip(enumerate_by_image(im_inds.data), enumerate_by_image(rel_inds[:,0])):
+            #breakpoint()z
             rl, ol = self.ggnn(rel_inds[rel_s:rel_e, 1:] - obj_s, obj_probs[obj_s:obj_e], obj_fmaps[obj_s:obj_e], vr[rel_s:rel_e])
             rel_logits.append(rl)
             obj_logits_refined.append(ol)
 
         rel_logits = torch.cat(rel_logits, 0)
-        
+
         if self.ggnn.refine_obj_cls:
             obj_logits_refined = torch.cat(obj_logits_refined, 0)
             obj_logits = obj_logits_refined
 
         obj_probs = F.softmax(obj_logits, 1)
         if self.mode == 'sgdet' and not self.training:
-            # NMS here for baseline            
+            # NMS here for baseline
             nms_mask = obj_probs.data.clone()
             nms_mask.zero_()
             for c_i in range(1, obj_probs.size(1)):
                 scores_ci = obj_probs.data[:, c_i]
                 boxes_ci = boxes_per_cls.data[:, c_i]
+                keep = nms(boxes=boxes_ci, scores=scores_ci, iou_threshold=0.3)
+                # keep = apply_nms(scores_ci, boxes_ci,
+                #                     pre_nms_topn=scores_ci.size(0), post_nms_topn=scores_ci.size(0),
+                #                     nms_thresh=0.3)
+                # print('my_model_24.GGNNRelReason.forward: keep.size() =', keep.size())
+                num_out = len(keep)
+                num_out = min(num_out, scores_ci.size(0))
+                keep = keep[:num_out].long()
 
-                keep = apply_nms(scores_ci, boxes_ci,
-                                    pre_nms_topn=scores_ci.size(0), post_nms_topn=scores_ci.size(0),
-                                    nms_thresh=0.3)
                 nms_mask[:, c_i][keep] = 1
 
             obj_preds = Variable(nms_mask * obj_probs.data, volatile=True)[:,1:].max(1)[1] + 1
         else:
             obj_preds = obj_labels if obj_labels is not None else obj_probs[:,1:].max(1)[1] + 1
-            
+
         return obj_logits, obj_preds, rel_logits
 
 
 
 class KERN(nn.Module):
     """
-    Knowledge-Embedded Routing Network 
+    Knowledge-Embedded Routing Network
     """
-    def __init__(self, classes, rel_classes, graph_path, emb_path, mode='sgdet', num_gpus=1, 
+    def __init__(self, classes, rel_classes, graph_path, emb_path, mode='sgdet', num_gpus=1,
                  require_overlap_det=True, pooling_dim=4096, use_resnet=False, thresh=0.01,
                  use_proposals=False,
                  ggnn_rel_time_step_num=3,
@@ -163,18 +169,18 @@ class KERN(nn.Module):
             self.roi_fmap = nn.Sequential(*roi_fmap)
             self.roi_fmap_obj = load_vgg(pretrained=False).classifier
 
-        self.ggnn_rel_reason = GGNNRelReason(mode=self.mode, 
-                                             num_obj_cls=len(self.classes), 
-                                             num_rel_cls=len(rel_classes), 
-                                             obj_dim=self.obj_dim, 
-                                             rel_dim=self.rel_dim, 
-                                             time_step_num=ggnn_rel_time_step_num, 
-                                             hidden_dim=ggnn_rel_hidden_dim, 
+        self.ggnn_rel_reason = GGNNRelReason(mode=self.mode,
+                                             num_obj_cls=len(self.classes),
+                                             num_rel_cls=len(rel_classes),
+                                             obj_dim=self.obj_dim,
+                                             rel_dim=self.rel_dim,
+                                             time_step_num=ggnn_rel_time_step_num,
+                                             hidden_dim=ggnn_rel_hidden_dim,
                                              output_dim=ggnn_rel_output_dim,
                                              emb_path=emb_path,
-                                             graph_path=graph_path, 
-                                             refine_obj_cls=refine_obj_cls, 
-                                             use_knowledge=use_knowledge, 
+                                             graph_path=graph_path,
+                                             refine_obj_cls=refine_obj_cls,
+                                             use_knowledge=use_knowledge,
                                              use_embedding=use_embedding)
 
         if rel_counts_path is not None:
@@ -187,7 +193,7 @@ class KERN(nn.Module):
             self.rel_class_weights = np.ones((self.num_rels,))
         self.rel_class_weights = Variable(torch.from_numpy(self.rel_class_weights).float().cuda(), requires_grad=False)
 
-        
+
     @property
     def num_classes(self):
         return len(self.classes)
@@ -239,8 +245,10 @@ class KERN(nn.Module):
         :param rois: [num_rois, 5] array of [img_num, x0, y0, x1, y1].
         :return: [num_rois, #dim] array
         """
-        feature_pool = RoIAlignFunction(self.pooling_size, self.pooling_size, spatial_scale=1 / 16)(
-            features, rois)
+        feature_pool = roi_align(features, rois, output_size=[self.pooling_size, self.pooling_size], spatial_scale=1/16)
+        # feature_pool = RoIAlignFunction(self.pooling_size, self.pooling_size, spatial_scale=1 / 16)(
+        #     features, rois)
+        # print('my_model_24.KERN.obj_feature_map: feature_pool.size() =', feature_pool.size())
         return self.roi_fmap_obj(feature_pool.view(rois.size(0), -1))
 
     def forward(self, x, im_sizes, image_offset,
@@ -260,14 +268,15 @@ class KERN(nn.Module):
                                   be used to compute the training loss. Each (img_ind, fpn_idx)
         :return: If train:
             scores, boxdeltas, labels, boxes, boxtargets, rpnscores, rpnboxes, rellabels
-            
+
             if test:
             prob dists, boxes, img inds, maxscores, classes
-            
+
         """
 
         result = self.detector(x, im_sizes, image_offset, gt_boxes, gt_classes, gt_rels, proposals,
                                train_anchor_inds, return_fmap=True)
+        #breakpoint()
         if result.is_none():
             return ValueError("heck")
 
@@ -287,6 +296,7 @@ class KERN(nn.Module):
 
         result.obj_fmap = self.obj_feature_map(result.fmap.detach(), rois)
 
+        #breakpoint()
         vr = self.visual_rep(result.fmap.detach(), rois, rel_inds[:, 1:])
 
         result.rm_obj_dists, result.obj_preds, result.rel_dists = self.ggnn_rel_reason(
@@ -297,7 +307,7 @@ class KERN(nn.Module):
             rel_inds=rel_inds,
             obj_labels=result.rm_obj_labels if self.training or self.mode == 'predcls' else None,
             boxes_per_cls=result.boxes_all
-        )   
+        )
 
         if self.training:
             return result
@@ -336,5 +346,3 @@ class KERN(nn.Module):
 
     def rel_loss(self, result):
         return F.cross_entropy(result.rel_dists, result.rel_labels[:, -1], weight=self.rel_class_weights)
-
-
