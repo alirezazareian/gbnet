@@ -141,5 +141,5 @@ def rel_assignments(im_inds, rpn_rois, roi_gtlabels, gt_boxes, gt_classes, gt_re
 
         num_box_seen += pred_boxes_i.shape[0]
     rel_labels = torch.LongTensor(np.concatenate(rel_labels, 0)).cuda(rpn_rois.get_device(),
-                                                                      async=True)
+                                                                      non_blocking=True)
     return rel_labels
