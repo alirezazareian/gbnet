@@ -1,30 +1,33 @@
 """
 File that involves dataloaders for the Visual Genome dataset.
 """
-
 import json
 import os
-
-import h5py
+from collections import defaultdict
+from h5py import File as h5py_File
 import numpy as np
-import torch
-from PIL import Image
-from torch.utils.data import Dataset
+from os.path import join as os_path_join, exists as os_path_exists
+from json import load as json_load
+from numpy import array as np_array, where as np_where, \
+    zeros_like as np_zeros_like, all as np_all, column_stack as np_column_stack, \
+    zeros as np_zeros, int32 as np_int32
+from numpy.random import random as np_random_random, choice as np_random_choice
+from PIL.Image import open as Image_open, FLIP_LEFT_RIGHT as Image_FLIP_LEFT_RIGHT
+from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms import Resize, Compose, ToTensor, Normalize
+from pycocotools.coco import COCO
 from dataloaders.blob import Blob
 from lib.fpn.box_intersections_cpu.bbox import bbox_overlaps
 from config import VG_IMAGES, IM_DATA_FN, VG_SGG_FN, VG_SGG_DICT_FN, BOX_SCALE, IM_SCALE, PROPOSAL_FN
 from dataloaders.image_transforms import SquarePad, Grayscale, Brightness, Sharpness, Contrast, \
     RandomOrder, Hue, random_crop
-from collections import defaultdict
-from pycocotools.coco import COCO
 
 
 class VG(Dataset):
     def __init__(self, mode, roidb_file=VG_SGG_FN, dict_file=VG_SGG_DICT_FN,
                  image_file=IM_DATA_FN, filter_empty_rels=True, num_im=-1, num_val_im=5000,
                  filter_duplicate_rels=True, filter_non_overlap=True,
-                 use_proposals=False):
+                 use_proposals=False, with_clean_classifier=None, get_state=None):
         """
         Torch dataset for VisualGenome
         :param mode: Must be train, test, or val
@@ -55,24 +58,27 @@ class VG(Dataset):
             self.roidb_file, self.mode, num_im, num_val_im=num_val_im,
             filter_empty_rels=filter_empty_rels,
             filter_non_overlap=self.filter_non_overlap and self.is_train,
+            dict_file=dict_file,
+            with_clean_classifier=with_clean_classifier,
+            get_state=get_state,
         )
 
         self.filenames = load_image_filenames(image_file)
-        self.filenames = [self.filenames[i] for i in np.where(self.split_mask)[0]]
+        self.filenames = [self.filenames[i] for i in np_where(self.split_mask)[0]]
 
         self.ind_to_classes, self.ind_to_predicates = load_info(dict_file)
 
         if use_proposals:
             print("Loading proposals", flush=True)
-            p_h5 = h5py.File(PROPOSAL_FN, 'r')
-            rpn_rois = p_h5['rpn_rois']
-            rpn_scores = p_h5['rpn_scores']
-            rpn_im_to_roi_idx = np.array(p_h5['im_to_roi_idx'][self.split_mask])
-            rpn_num_rois = np.array(p_h5['num_rois'][self.split_mask])
+            with h5py_File(PROPOSAL_FN, 'r') as p_h5:
+                rpn_rois = p_h5['rpn_rois']
+                rpn_scores = p_h5['rpn_scores']
+                rpn_im_to_roi_idx = np_array(p_h5['im_to_roi_idx'][self.split_mask])
+                rpn_num_rois = np_array(p_h5['num_rois'][self.split_mask])
 
             self.rpn_rois = []
             for i in range(len(self.filenames)):
-                rpn_i = np.column_stack((
+                rpn_i = np_column_stack((
                     rpn_scores[rpn_im_to_roi_idx[i]:rpn_im_to_roi_idx[i] + rpn_num_rois[i]],
                     rpn_rois[rpn_im_to_roi_idx[i]:rpn_im_to_roi_idx[i] + rpn_num_rois[i]],
                 ))
@@ -139,10 +145,10 @@ class VG(Dataset):
         return train, val, test
 
     def __getitem__(self, index):
-        image_unpadded = Image.open(self.filenames[index]).convert('RGB')
+        image_unpadded = Image_open(self.filenames[index]).convert('RGB')
 
         # Optionally flip the image if we're doing training
-        flipped = self.is_train and np.random.random() > 0.5
+        flipped = self.is_train and np_random_random() > 0.5
         gt_boxes = self.gt_boxes[index].copy()
 
         # Boxes are already at BOX_SCALE
@@ -162,9 +168,10 @@ class VG(Dataset):
         if flipped:
             scaled_w = int(box_scale_factor * float(w))
             # print("Scaled w is {}".format(scaled_w))
-            image_unpadded = image_unpadded.transpose(Image.FLIP_LEFT_RIGHT)
+            image_unpadded = image_unpadded.transpose(Image_FLIP_LEFT_RIGHT)
             gt_boxes[:, [0, 2]] = scaled_w - gt_boxes[:, [2, 0]]
 
+        print(f'visual_genome: before: (w, h) = {(w, h)}')
         img_scale_factor = IM_SCALE / max(w, h)
         if h > w:
             im_size = (IM_SCALE, int(w * img_scale_factor), img_scale_factor)
@@ -173,6 +180,7 @@ class VG(Dataset):
         else:
             im_size = (IM_SCALE, IM_SCALE, img_scale_factor)
 
+        print(f'visual_genome: after: im_size = {im_size}')
         gt_rels = self.relationships[index].copy()
         if self.filter_duplicate_rels:
             # Filter out dupes!
@@ -181,8 +189,8 @@ class VG(Dataset):
             all_rel_sets = defaultdict(list)
             for (o0, o1, r) in gt_rels:
                 all_rel_sets[(o0, o1)].append(r)
-            gt_rels = [(k[0], k[1], np.random.choice(v)) for k,v in all_rel_sets.items()]
-            gt_rels = np.array(gt_rels)
+            gt_rels = [(k[0], k[1], np_random_choice(v)) for k,v in all_rel_sets.items()]
+            gt_rels = np_array(gt_rels)
 
         entry = {
             'img': self.transform_pipeline(image_unpadded),
@@ -245,7 +253,7 @@ def load_image_filenames(image_file, image_dir=VG_IMAGES):
     :return: List of filenames corresponding to the good images
     """
     with open(image_file, 'r') as f:
-        im_data = json.load(f)
+        im_data = json_load(f)
 
     corrupted_ims = ['1592.jpg', '1722.jpg', '4616.jpg', '4617.jpg']
     fns = []
@@ -254,15 +262,15 @@ def load_image_filenames(image_file, image_dir=VG_IMAGES):
         if basename in corrupted_ims:
             continue
 
-        filename = os.path.join(image_dir, basename)
-        if os.path.exists(filename):
+        filename = os_path_join(image_dir, basename)
+        if os_path_exists(filename):
             fns.append(filename)
     assert len(fns) == 108073
     return fns
 
 
 def load_graphs(graphs_file, mode='train', num_im=-1, num_val_im=0, filter_empty_rels=True,
-                filter_non_overlap=False):
+                filter_non_overlap=False, dict_file=None, with_clean_classifier=None, get_state=None):
     """
     Load the file containing the GT boxes and relations, as well as the dataset split
     :param graphs_file: HDF5
@@ -272,92 +280,208 @@ def load_graphs(graphs_file, mode='train', num_im=-1, num_val_im=0, filter_empty
     :param filter_empty_rels: (will be filtered otherwise.)
     :param filter_non_overlap: If training, filter images that dont overlap.
     :return: image_index: numpy array corresponding to the index of images we're using
-             boxes: List where each element is a [num_gt, 4] array of ground 
+             boxes: List where each element is a [num_gt, 4] array of ground
                     truth boxes (x1, y1, x2, y2)
              gt_classes: List where each element is a [num_gt] array of classes
-             relationships: List where each element is a [num_r, 3] array of 
+             relationships: List where each element is a [num_r, 3] array of
                     (box_ind_1, box_ind_2, predicate) relationships
     """
     if mode not in ('train', 'val', 'test'):
         raise ValueError('{} invalid'.format(mode))
 
-    roi_h5 = h5py.File(graphs_file, 'r')
-    data_split = roi_h5['split'][:]
-    split = 2 if mode == 'test' else 0
-    split_mask = data_split == split
+    with h5py_File(graphs_file, 'r') as roi_h5:
+        data_split = roi_h5['split'][:]
+        split = 2 if mode == 'test' else 0
+        split_mask = data_split == split
 
-    # Filter out images without bounding boxes
-    split_mask &= roi_h5['img_to_first_box'][:] >= 0
-    if filter_empty_rels:
-        split_mask &= roi_h5['img_to_first_rel'][:] >= 0
+        # Filter out images without bounding boxes
+        split_mask &= roi_h5['img_to_first_box'][:] >= 0
+        if filter_empty_rels:
+            split_mask &= roi_h5['img_to_first_rel'][:] >= 0
 
-    image_index = np.where(split_mask)[0]
-    if num_im > -1:
-        image_index = image_index[:num_im]
-    if num_val_im > 0:
-        if mode == 'val':
-            image_index = image_index[:num_val_im]
-        elif mode == 'train':
-            image_index = image_index[num_val_im:]
+        image_index = np_where(split_mask)[0]
+        if num_im > -1:
+            image_index = image_index[:num_im]
+        if num_val_im > 0:
+            if mode == 'val':
+                image_index = image_index[:num_val_im]
+            elif mode == 'train':
+                image_index = image_index[num_val_im:]
 
 
-    split_mask = np.zeros_like(data_split).astype(bool)
-    split_mask[image_index] = True
+        split_mask = np_zeros_like(data_split, dtype=bool)
+        split_mask[image_index] = True
 
-    # Get box information
-    all_labels = roi_h5['labels'][:, 0]
-    all_boxes = roi_h5['boxes_{}'.format(BOX_SCALE)][:]  # will index later
-    assert np.all(all_boxes[:, :2] >= 0)  # sanity check
-    assert np.all(all_boxes[:, 2:] > 0)  # no empty box
+        # Get box information
+        all_labels = roi_h5['labels'][:, 0]
+        all_boxes = roi_h5['boxes_{}'.format(BOX_SCALE)][:]  # will index later
+        assert np_all(all_boxes[:, :2] >= 0)  # sanity check
+        assert np_all(all_boxes[:, 2:] > 0)  # no empty box
 
-    # convert from xc, yc, w, h to x1, y1, x2, y2
-    all_boxes[:, :2] = all_boxes[:, :2] - all_boxes[:, 2:] / 2
-    all_boxes[:, 2:] = all_boxes[:, :2] + all_boxes[:, 2:]
+        # convert from xc, yc, w, h to x1, y1, x2, y2
+        all_boxes[:, :2] = all_boxes[:, :2] - all_boxes[:, 2:] / 2
+        all_boxes[:, 2:] = all_boxes[:, :2] + all_boxes[:, 2:]
 
-    im_to_first_box = roi_h5['img_to_first_box'][split_mask]
-    im_to_last_box = roi_h5['img_to_last_box'][split_mask]
-    im_to_first_rel = roi_h5['img_to_first_rel'][split_mask]
-    im_to_last_rel = roi_h5['img_to_last_rel'][split_mask]
+        im_to_first_box = roi_h5['img_to_first_box'][split_mask]
+        im_to_last_box = roi_h5['img_to_last_box'][split_mask]
+        im_to_first_rel = roi_h5['img_to_first_rel'][split_mask]
+        im_to_last_rel = roi_h5['img_to_last_rel'][split_mask]
 
-    # load relation labels
-    _relations = roi_h5['relationships'][:]
-    _relation_predicates = roi_h5['predicates'][:, 0]
+        # load relation labels
+        _relations = roi_h5['relationships'][:]
+        _relation_predicates = roi_h5['predicates'][:, 0]
     assert (im_to_first_rel.shape[0] == im_to_last_rel.shape[0])
     assert (_relations.shape[0] == _relation_predicates.shape[0])  # sanity check
 
     # Get everything by image.
     boxes = []
     gt_classes = []
+    # gt_attributes = []
     relationships = []
-    for i in range(len(image_index)):
-        boxes_i = all_boxes[im_to_first_box[i]:im_to_last_box[i] + 1, :]
-        gt_classes_i = all_labels[im_to_first_box[i]:im_to_last_box[i] + 1]
+    pred_topk = []
+    pred_num = 15
+    pred_count=0
+    # with open('./datasets/vg/VG-SGG-dicts-with-attri-info.json','r') as f:
+    with open(dict_file,'r') as f:
+        vg_dict_info = json_load(f)
 
-        if im_to_first_rel[i] >= 0:
-            predicates = _relation_predicates[im_to_first_rel[i]:im_to_last_rel[i] + 1]
-            obj_idx = _relations[im_to_first_rel[i]:im_to_last_rel[i] + 1] - im_to_first_box[i]
-            assert np.all(obj_idx >= 0)
-            assert np.all(obj_idx < boxes_i.shape[0])
-            rels = np.column_stack((obj_idx, predicates))
+    predicates_tree = vg_dict_info['predicate_count']
+    #predicates_tree = json.load(open('./datasets/vg/predicate_wikipedia_count.json', 'r'))
+    predicates_sort = sorted(predicates_tree.items(), key=lambda x:x[1], reverse=True)
+    for pred_i in predicates_sort:
+        if pred_count >= pred_num:
+            break
+        pred_topk.append(str(pred_i[0]))
+        pred_count += 1
+
+    if with_clean_classifier:
+        root_classes = pred_topk
+    else:
+        root_classes = None
+    if get_state:
+        root_classes = None
+    root_classes_count = {}
+    leaf_classes_count = {}
+    all_classes_count = {}
+    for i in range(len(image_index)):
+        i_obj_start = im_to_first_box[i]
+        i_obj_end = im_to_last_box[i]
+        i_rel_start = im_to_first_rel[i]
+        i_rel_end = im_to_last_rel[i]
+
+        boxes_i = all_boxes[i_obj_start: i_obj_end + 1, :]
+        gt_classes_i = all_labels[i_obj_start: i_obj_end + 1]
+        # gt_attributes_i = all_attributes[i_obj_start: i_obj_end + 1, :]
+
+        if i_rel_start >= 0:
+            predicates = _relation_predicates[i_rel_start: i_rel_end + 1]
+            obj_idx = _relations[i_rel_start: i_rel_end + 1] - i_obj_start  # range is [0, num_box)
+            assert np_all(obj_idx >= 0)
+            assert np_all(obj_idx < boxes_i.shape[0])
+            rels = np_column_stack((obj_idx, predicates))  # (num_rel, 3), representing sub, obj, and pred
         else:
             assert not filter_empty_rels
-            rels = np.zeros((0, 3), dtype=np.int32)
+            rels = np_zeros((0, 3), dtype=np_int32)
 
         if filter_non_overlap:
             assert mode == 'train'
-            inters = bbox_overlaps(boxes_i, boxes_i)
+            # construct BoxList object to apply boxlist_iou method
+            # give a useless (height=0, width=0)
+            boxes_i_obj = BoxList(boxes_i, (1000, 1000), 'xyxy')
+            inters = boxlist_iou(boxes_i_obj, boxes_i_obj)
             rel_overs = inters[rels[:, 0], rels[:, 1]]
-            inc = np.where(rel_overs > 0.0)[0]
+            inc = np_where(rel_overs > 0.0)[0]
 
             if inc.size > 0:
                 rels = rels[inc]
             else:
                 split_mask[image_index[i]] = 0
                 continue
+        if root_classes is not None and mode == 'train':
+            # print('old boxes: ', boxes_i)
+            # print('old gt_classes_i: ', gt_classes_i)
+            # print('old rels: ', rels)
+            rel_temp = []
+            boxmap_old2new = {}
+            box_num = 0
+            retain_box = []
+            # print('rels: ',rels)
+            for rel_i in rels:
+                rel_i_pred = ind_to_predicates[rel_i[2]]
+                if rel_i_pred not in all_classes_count:
+                    all_classes_count[rel_i_pred] = 0
+                all_classes_count[rel_i_pred] = all_classes_count[rel_i_pred] + 1
+                if rel_i_pred not in root_classes or rel_i[2] == 0:
+                    rel_i_leaf = rel_i
+
+                    # if rel_i[0] not in boxmap_old2new:
+                    # boxmap_old2new[rel_i[0]] = box_num
+                    # retain_box.append(rel_i[0])
+                    # box_num = box_num + 1
+                    # if rel_i[1] not in boxmap_old2new:
+                    # boxmap_old2new[rel_i[1]] = box_num
+                    # retain_box.append(rel_i[1])
+                    # box_num = box_num + 1
+                    # rel_i_new[0] = boxmap_old2new[rel_i[0]]
+                    # rel_i_new[1] = boxmap_old2new[rel_i[1]]
+                    if rel_i_pred not in leaf_classes_count:
+                        leaf_classes_count[rel_i_pred] = 0
+                    leaf_classes_count[rel_i_pred] = leaf_classes_count[rel_i_pred] + 1
+                    rel_temp.append(rel_i_leaf)
+                if rel_i_pred in root_classes:
+                    rel_i_root = rel_i
+                    if rel_i_pred not in root_classes_count:
+                        root_classes_count[rel_i_pred] = 0
+                    if root_classes_count[rel_i_pred] < 2000: #1000: #2000:
+                        rel_temp.append(rel_i_root)
+                        root_classes_count[rel_i_pred] = root_classes_count[rel_i_pred] + 1
+            if len(rel_temp) == 0:
+                split_mask[image_index[i]] = 0
+                continue
+            else:
+                rels = np_array(rel_temp, dtype=np_int32)
+
+            # retain_box = np.array(retain_box, dtype=np.int64)
+            # boxes_i = boxes_i[retain_box]
+            # gt_classes_i = gt_classes_i[retain_box]
+            # gt_attributes_i = gt_attributes_i[retain_box]
 
         boxes.append(boxes_i)
         gt_classes.append(gt_classes_i)
+        # gt_attributes.append(gt_attributes_i)
         relationships.append(rels)
+    print('mode: ',mode)
+    print('root_classes_count: ', root_classes_count)
+    count_list = [0,]
+    for i in root_classes_count:
+        count_list.append(root_classes_count[i])
+    print('mean root class number: ', np_array(count_list).mean())
+    print('sum root class number: ', np_array(count_list).sum())
+
+    print('leaf_classes_count: ', leaf_classes_count)
+    count_list = [0,]
+    for i in leaf_classes_count:
+        count_list.append(leaf_classes_count[i])
+    print('mean leaf class number: ', np_array(count_list).mean())
+    print('sum leaf class number: ', np_array(count_list).sum())
+    # clean_classes_count = {}
+    # clean_classes_count = root_classes_count.copy()
+    # clean_classes_count.update(leaf_classes_count)
+    # with open("./misc/clean_classes_count.json", "w") as dump_f:
+    #     print('save clean_classes_count')
+    #     json.dump(clean_classes_count, dump_f)
+    print('all_classes_count: ', all_classes_count)
+    count_list = [0,]
+    for i in all_classes_count:
+        count_list.append(all_classes_count[i])
+    # if split == 'train':
+    #     with open("./misc/all_predicate_count.json", "w") as dump_f:
+    #         print('save all_classes_count')
+    #         json.dump(all_classes_count, dump_f)
+    #     os._exit(0)
+    print('mean all class number: ', np_array(count_list).mean())
+    print('sum all class number: ', np_array(count_list).sum())
+    print('number images: ', split_mask.sum())
 
     return split_mask, boxes, gt_classes, relationships
 
@@ -369,7 +493,8 @@ def load_info(info_file):
     :return: ind_to_classes: sorted list of classes
              ind_to_predicates: sorted list of predicates
     """
-    info = json.load(open(info_file, 'r'))
+    with open(info_file, 'r') as f:
+        info = json_load(f)
     info['label_to_idx']['__background__'] = 0
     info['predicate_to_idx']['__background__'] = 0
 
@@ -391,7 +516,7 @@ def vg_collate(data, num_gpus=3, is_train=False, mode='det'):
     return blob
 
 
-class VGDataLoader(torch.utils.data.DataLoader):
+class VGDataLoader(DataLoader):
     """
     Iterates through the data, filtering out None,
      but also loads everything as a (cuda) variable
