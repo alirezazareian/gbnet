@@ -10,9 +10,11 @@ from torch import nn
 from torch.nn import Linear, Sequential, Module
 from torch.nn import parallel
 from torch.nn import functional as F
+from torch.nn.functional import cross_entropy as F_cross_entropy, softmax as F_softmax
 from torch.nn.utils.rnn import PackedSequence
-from config import BATCHNORM_MOMENTUM
 from torchvision.ops import nms, roi_align
+from torch.cuda import current_device
+from config import BATCHNORM_MOMENTUM
 
 from lib.resnet import resnet_l4
 from lib.fpn.box_utils import bbox_overlaps, center_size
@@ -26,6 +28,7 @@ from lib.my_ggnn_10 import GGNN
 np.set_printoptions(threshold=sys.maxsize)
 
 MODES = ('sgdet', 'sgcls', 'predcls')
+CURRENT_DEVICE = current_device()
 
 
 class GGNNRelReason(Module):
@@ -33,11 +36,13 @@ class GGNNRelReason(Module):
     Module for relationship classification.
     """
     def __init__(self, graph_path, emb_path, mode='sgdet', num_obj_cls=151, num_rel_cls=51, obj_dim=4096, rel_dim=4096,
-                time_step_num=3, hidden_dim=512, output_dim=512, use_knowledge=True, use_embedding=True, refine_obj_cls=False, with_clean_classifier=None, with_transfer=None):
+                time_step_num=3, hidden_dim=512, output_dim=512, use_knowledge=True, use_embedding=True, refine_obj_cls=False, with_clean_classifier=None, with_transfer=None, config=None):
 
         super(GGNNRelReason, self).__init__()
         assert mode in MODES
         self.mode = mode
+        self.with_clean_classifier = with_clean_classifier
+        self.with_transfer = with_transfer
         self.num_obj_cls = num_obj_cls
         self.num_rel_cls = num_rel_cls
         self.obj_dim = obj_dim
@@ -51,7 +56,7 @@ class GGNNRelReason(Module):
 
         self.ggnn = GGNN(time_step_num=time_step_num, hidden_dim=hidden_dim, output_dim=output_dim,
                          emb_path=emb_path, graph_path=graph_path, refine_obj_cls=refine_obj_cls,
-                         use_knowledge=use_knowledge, use_embedding=use_embedding)
+                         use_knowledge=use_knowledge, use_embedding=use_embedding, config=config, with_clean_classifier=with_clean_classifier, with_transfer=with_transfer, num_obj_cls=num_obj_cls, num_rel_cls=num_rel_cls)
 
 
     def forward(self, im_inds, obj_fmaps, obj_logits, rel_inds, vr, obj_labels=None, boxes_per_cls=None):
@@ -63,8 +68,8 @@ class GGNNRelReason(Module):
         # (num_rel, 3)
         if self.mode == 'predcls':
             #breakpoint()
-            obj_logits = torch_tensor(onehot_logits(obj_labels.data, self.num_obj_cls))
-        obj_probs = F.softmax(obj_logits, 1)
+            obj_logits = onehot_logits(obj_labels.data, self.num_obj_cls).clone().detach()
+        obj_probs = F_softmax(obj_logits, 1)
 
         obj_fmaps = self.obj_proj(obj_fmaps)
         vr = self.rel_proj(vr)
@@ -83,7 +88,7 @@ class GGNNRelReason(Module):
             obj_logits_refined = torch.cat(obj_logits_refined, 0)
             obj_logits = obj_logits_refined
 
-        obj_probs = F.softmax(obj_logits, 1)
+        obj_probs = F_softmax(obj_logits, 1)
         if self.mode == 'sgdet' and not self.training:
             # NMS here for baseline
             nms_mask = obj_probs.data.clone()
@@ -102,13 +107,10 @@ class GGNNRelReason(Module):
 
                 nms_mask[:, c_i][keep] = 1
 
-            obj_preds = torch_tensor(nms_mask * obj_probs.data, requires_grad=False, device=self.devices, dtype=torch_float32)[:,1:].max(1)[1] + 1
+            obj_preds = torch_tensor(nms_mask * obj_probs.data, requires_grad=False, device=CURRENT_DEVICE, dtype=torch_float32)[:,1:].max(1)[1] + 1
         else:
             obj_preds = obj_labels if obj_labels is not None else obj_probs[:,1:].max(1)[1] + 1
 
-                # rel_dists_clean = (self.pred_adj_nor @ rel_dists_clean.T).T
-        if self.with_transfer:
-            rel_logits_clean = (self.pred_adj_nor @ rel_logits_clean.T).T
         return obj_logits, obj_preds, rel_logits
 
 
@@ -123,7 +125,7 @@ class KERN(Module):
                  ggnn_rel_time_step_num=3,
                  ggnn_rel_hidden_dim=512,
                  ggnn_rel_output_dim=512, use_knowledge=True, use_embedding=True, refine_obj_cls=False,
-                 rel_counts_path=None, class_volume=1.0, with_clean_classifier=None, with_transfer=None):
+                 rel_counts_path=None, class_volume=1.0, with_clean_classifier=None, with_transfer=None, config=None):
 
         """
         :param classes: Object classes
@@ -189,6 +191,7 @@ class KERN(Module):
                                              use_embedding=use_embedding,
                                              with_clean_classifier=with_clean_classifier,
                                              with_transfer=with_transfer,
+                                             config=config,
                                              )
 
         if rel_counts_path is not None:
@@ -200,7 +203,7 @@ class KERN(Module):
         else:
             self.rel_class_weights = np.ones((self.num_rels,))
 
-        self.rel_class_weights = torch_tensor(self.rel_class_weights, requires_grad=False, device=self.devices, dtype=torch_float32)
+        self.rel_class_weights = torch_tensor(self.rel_class_weights, requires_grad=False, device=CURRENT_DEVICE, dtype=torch_float32)
 
         # self.bpl_hidden_dim = config.MODEL.ROI_RELATION_HEAD.BPL_HIDDEN_DIM
         # self.bpl_pooling_dim = config.MODEL.ROI_RELATION_HEAD.BPL_POOLING_DIM
@@ -216,12 +219,7 @@ class KERN(Module):
         self.with_transfer = config.MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER
 
         if self.with_clean_classifier:
-            self.post_cat_clean = Linear(self.hidden_dim * 2, self.pooling_dim)
-            self.rel_compress_clean = Linear(self.pooling_dim, self.num_rel_cls, bias=True)
-            layer_init(self.post_cat_clean, xavier=True)
-            layer_init(self.rel_compress_clean, xavier=True)
             if self.with_transfer:
-                self.devices = config.MODEL.DEVICE
                 print("!!!!!!!!!With Confusion Matrix Channel!!!!!")
                 pred_adj_np = np.load(config.MODEL.CONF_MAT_FREQ_TRAIN)
                 # pred_adj_np = 1.0 - pred_adj_np
@@ -230,7 +228,7 @@ class KERN(Module):
                 pred_adj_np[0, 0] = 1.0
                 # adj_i_j means the baseline outputs category j, but the ground truth is i.
                 pred_adj_np = pred_adj_np / (pred_adj_np.sum(-1)[:, None] + 1e-8)
-                self.pred_adj_nor = torch_tensor(pred_adj_np, dtype=torch_float32, decie=self.devices)
+                self.pred_adj_nor = torch_tensor(pred_adj_np, dtype=torch_float32, decie=CURRENT_DEVICE)
 
 
     def forward(self, x, im_sizes, image_offset,
@@ -293,7 +291,7 @@ class KERN(Module):
             return result
 
         twod_inds = arange(result.obj_preds.data) * self.num_classes + result.obj_preds.data
-        result.obj_scores = F.softmax(result.rm_obj_dists, dim=1).view(-1)[twod_inds]
+        result.obj_scores = F_softmax(result.rm_obj_dists, dim=1).view(-1)[twod_inds]
 
         # Bbox regression
         if self.mode == 'sgdet':
@@ -302,27 +300,10 @@ class KERN(Module):
             # Boxes will get fixed by filter_dets function.
             bboxes = result.rm_box_priors
 
-        rel_rep = F.softmax(result.rel_dists, dim=1)
+        rel_rep = F_softmax(result.rel_dists, dim=1)
 
-        filtered_dets = filter_dets(bboxes, result.obj_scores,
+        return filter_dets(bboxes, result.obj_scores,
                            result.obj_preds, rel_inds[:, 1:], rel_rep)
-
-        if self.with_clean_classifier:
-            prod_rep_clean = cat(prod_reps, dim=0)
-            prod_rep_clean = self.post_cat_clean(prod_rep_clean)
-            if self.use_vision:
-                if self.union_single_not_match:
-                    prod_rep_clean = prod_rep_clean * self.up_dim_clean(union_features)
-                else:
-                    prod_rep_clean = prod_rep_clean * union_features
-
-            rel_dists_clean = self.rel_compress_clean(prod_rep_clean)
-            if self.with_transfer:
-                rel_dists_clean = (self.pred_adj_nor @ rel_dists_clean.T).T
-
-            rel_dists = rel_dists_clean
-
-        return filtered_dets #TODO
 
 
     @property
@@ -399,9 +380,9 @@ class KERN(Module):
 
     def obj_loss(self, result):
         if self.ggnn_rel_reason.ggnn.refine_obj_cls:
-            return F.cross_entropy(result.rm_obj_dists, result.rm_obj_labels)
+            return F_cross_entropy(result.rm_obj_dists, result.rm_obj_labels)
         else:
-            return torch_zeros(1, requires_grad=False, device=self.devices, dtype=torch_float32)
+            return torch_zeros(1, requires_grad=False, device=CURRENT_DEVICE, dtype=torch_float32)
 
     def rel_loss(self, result):
-        return F.cross_entropy(result.rel_dists, result.rel_labels[:, -1], weight=self.rel_class_weights)
+        return F_cross_entropy(result.rel_dists, result.rel_labels[:, -1], weight=self.rel_class_weights)

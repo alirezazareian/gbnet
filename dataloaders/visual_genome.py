@@ -3,6 +3,7 @@ File that involves dataloaders for the Visual Genome dataset.
 """
 import json
 import os
+from os import environ as os_environ
 from collections import defaultdict
 from h5py import File as h5py_File
 import numpy as np
@@ -21,6 +22,9 @@ from lib.fpn.box_intersections_cpu.bbox import bbox_overlaps
 from config import VG_IMAGES, IM_DATA_FN, VG_SGG_FN, VG_SGG_DICT_FN, BOX_SCALE, IM_SCALE, PROPOSAL_FN
 from dataloaders.image_transforms import SquarePad, Grayscale, Brightness, Sharpness, Contrast, \
     RandomOrder, Hue, random_crop
+
+
+PRINTING = int(os_environ.get('printing', False))
 
 
 class VG(Dataset):
@@ -171,7 +175,7 @@ class VG(Dataset):
             image_unpadded = image_unpadded.transpose(Image_FLIP_LEFT_RIGHT)
             gt_boxes[:, [0, 2]] = scaled_w - gt_boxes[:, [2, 0]]
 
-        print(f'visual_genome: before: (w, h) = {(w, h)}')
+        if PRINTING: print(f'visual_genome: before: (w, h) = {(w, h)}')
         img_scale_factor = IM_SCALE / max(w, h)
         if h > w:
             im_size = (IM_SCALE, int(w * img_scale_factor), img_scale_factor)
@@ -180,7 +184,7 @@ class VG(Dataset):
         else:
             im_size = (IM_SCALE, IM_SCALE, img_scale_factor)
 
-        print(f'visual_genome: after: im_size = {im_size}')
+        if PRINTING: print(f'visual_genome: after: im_size = {im_size}')
         gt_rels = self.relationships[index].copy()
         if self.filter_duplicate_rels:
             # Filter out dupes!
@@ -450,27 +454,27 @@ def load_graphs(graphs_file, mode='train', num_im=-1, num_val_im=0, filter_empty
         gt_classes.append(gt_classes_i)
         # gt_attributes.append(gt_attributes_i)
         relationships.append(rels)
-    print('mode: ',mode)
-    print('root_classes_count: ', root_classes_count)
+    if PRINTING: print('mode: ',mode)
+    if PRINTING: print('root_classes_count: ', root_classes_count)
     count_list = [0,]
     for i in root_classes_count:
         count_list.append(root_classes_count[i])
-    print('mean root class number: ', np_array(count_list).mean())
-    print('sum root class number: ', np_array(count_list).sum())
+    if PRINTING: print('mean root class number: ', np_array(count_list).mean())
+    if PRINTING: print('sum root class number: ', np_array(count_list).sum())
 
-    print('leaf_classes_count: ', leaf_classes_count)
+    if PRINTING: print('leaf_classes_count: ', leaf_classes_count)
     count_list = [0,]
     for i in leaf_classes_count:
         count_list.append(leaf_classes_count[i])
-    print('mean leaf class number: ', np_array(count_list).mean())
-    print('sum leaf class number: ', np_array(count_list).sum())
+    if PRINTING: print('mean leaf class number: ', np_array(count_list).mean())
+    if PRINTING: print('sum leaf class number: ', np_array(count_list).sum())
     # clean_classes_count = {}
     # clean_classes_count = root_classes_count.copy()
     # clean_classes_count.update(leaf_classes_count)
     # with open("./misc/clean_classes_count.json", "w") as dump_f:
     #     print('save clean_classes_count')
     #     json.dump(clean_classes_count, dump_f)
-    print('all_classes_count: ', all_classes_count)
+    if PRINTING: print('all_classes_count: ', all_classes_count)
     count_list = [0,]
     for i in all_classes_count:
         count_list.append(all_classes_count[i])
@@ -479,9 +483,9 @@ def load_graphs(graphs_file, mode='train', num_im=-1, num_val_im=0, filter_empty
     #         print('save all_classes_count')
     #         json.dump(all_classes_count, dump_f)
     #     os._exit(0)
-    print('mean all class number: ', np_array(count_list).mean())
-    print('sum all class number: ', np_array(count_list).sum())
-    print('number images: ', split_mask.sum())
+    if PRINTING: print('mean all class number: ', np_array(count_list).mean())
+    if PRINTING: print('sum all class number: ', np_array(count_list).sum())
+    if PRINTING: print('number images: ', split_mask.sum())
 
     return split_mask, boxes, gt_classes, relationships
 

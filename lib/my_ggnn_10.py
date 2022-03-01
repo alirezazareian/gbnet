@@ -6,10 +6,11 @@
 import os, sys
 import torch
 from torch import tensor as torch_tensor, float32 as torch_float32, \
-    LongTensor as torch_LongTensor, arange as torch_arange, mm as torch_mm, \
+    int64 as torch_int64, arange as torch_arange, mm as torch_mm, \
     zeros as torch_zeros, \
     sigmoid as torch_sigmoid, tanh as torch_tanh, cat as torch_cat, \
     sum as torch_sum, abs as torch_abs
+from torch.cuda import current_device
 from torch.nn import Module, Linear
 from torch.nn.functional import softmax as F_softmax
 import numpy as np
@@ -17,17 +18,22 @@ import pickle
 from os import environ as os_environ
 from lib.my_util import MLP
 
+CUDA_DEVICE = current_device()
+
 def wrap(nparr):
-    return torch_tensor(nparr, dtype=torch_float32, device=int(os_environ['CUDA_VISIBLE_DEVICES']), requires_grad=False)
+    return torch_tensor(nparr, dtype=torch_float32, device=CUDA_DEVICE, requires_grad=False)
 
 def arange(num):
-    return torch_arange(num, dtype=torch_LongTensor, device=int(os_environ['CUDA_VISIBLE_DEVICES']))
+    return torch_arange(num, dtype=torch_int64, device=CUDA_DEVICE)
 
 class GGNN(Module):
     def __init__(self, emb_path, graph_path, time_step_num=3, hidden_dim=512, output_dim=512,
-                 use_embedding=True, use_knowledge=True, refine_obj_cls=False, num_ents=151, num_preds=51, config=None):
+                 use_embedding=True, use_knowledge=True, refine_obj_cls=False, num_ents=151, num_preds=51, config=None, with_clean_classifier=None, with_transfer=None, num_obj_cls=None, num_rel_cls=None):
         super(GGNN, self).__init__()
         self.time_step_num = time_step_num
+
+        self.with_clean_classifier = with_clean_classifier
+        self.with_transfer = with_transfer
 
         if use_embedding:
             with open(emb_path, 'rb') as fin:
@@ -40,8 +46,10 @@ class GGNN(Module):
             # self.emb_pred = np.eye(num_preds, dtype=np.float32)
             self.emb_pred = torch_eye(num_preds, dtype=torch_float32)
 
-        num_ont_ent = self.emb_ent.size(0)
-        num_ont_pred = self.emb_pred.size(0)
+        self.num_ont_ent = self.emb_ent.size(0)
+        assert self.num_ont_ent == num_obj_cls
+        self.num_ont_pred = self.emb_pred.size(0)
+        assert self.num_ont_pred == num_rel_cls
 
         if use_knowledge:
             with open(graph_path, 'rb') as fin:
@@ -121,8 +129,8 @@ class GGNN(Module):
 
         self.debug_info = {}
 
-        self.with_clean_classifier = config.MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER
-        self.with_transfer = config.MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER
+        self.with_clean_classifier = with_clean_classifier
+        self.with_transfer = with_transfer
 
         if self.with_clean_classifier:
             self.fc_output_proj_img_pred_clean = MLP([hidden_dim, hidden_dim, hidden_dim], act_fn='ReLU', last_act=False)
@@ -133,7 +141,6 @@ class GGNN(Module):
                 self.fc_output_proj_ont_ent_clean = MLP([hidden_dim, hidden_dim, hidden_dim], act_fn='ReLU', last_act=False)
 
             if self.with_transfer:
-                self.devices = config.MODEL.DEVICE
                 print("!!!!!!!!!With Confusion Matrix Channel!!!!!")
                 pred_adj_np = np.load(config.MODEL.CONF_MAT_FREQ_TRAIN)
                 # pred_adj_np = 1.0 - pred_adj_np
@@ -142,7 +149,7 @@ class GGNN(Module):
                 pred_adj_np[0, 0] = 1.0
                 # adj_i_j means the baseline outputs category j, but the ground truth is i.
                 pred_adj_np = pred_adj_np / (pred_adj_np.sum(-1)[:, None] + 1e-8)
-                self.pred_adj_nor = torch_tensor(pred_adj_np, dtype=torch_float32, decie=self.devices)
+                self.pred_adj_nor = torch_tensor(pred_adj_np, dtype=torch_float32, device=CUDA_DEVICE)
 
 
     def forward(self, rel_inds, obj_probs, obj_fmaps, vr):
@@ -161,21 +168,21 @@ class GGNN(Module):
         nodes_img_pred = vr
 
         # edges_img_pred2subj = wrap(np.zeros((num_img_pred, num_img_ent)))
-        edges_img_pred2subj = torch_zeros((num_img_pred, num_img_ent), dtype=torch_float32, devices=int(os_environ['CUDA_VISIBLE_DEVICES']), requires_grad=False)
+        edges_img_pred2subj = torch_zeros((num_img_pred, num_img_ent), dtype=torch_float32, device=CUDA_DEVICE, requires_grad=False)
         edges_img_pred2subj[arange(num_img_pred), rel_inds[:, 0]] = 1
         # edges_img_pred2obj = wrap(np.zeros((num_img_pred, num_img_ent)))
-        edges_img_pred2obj = torch_zeros((num_img_pred, num_img_ent), dtype=torch_float32, devices=int(os_environ['CUDA_VISIBLE_DEVICES']), requires_grad=False)
+        edges_img_pred2obj = torch_zeros((num_img_pred, num_img_ent), dtype=torch_float32, device=CUDA_DEVICE, requires_grad=False)
         edges_img_pred2obj[arange(num_img_pred), rel_inds[:, 1]] = 1
         edges_img_subj2pred = edges_img_pred2subj.t()
         edges_img_obj2pred = edges_img_pred2obj.t()
 
         # edges_img2ont_ent = wrap(obj_probs.data.cpu().numpy())
-        edges_img2ont_ent = torch_tensor(obj_probs.data, dtype=torch_float32, devices=int(os_environ['CUDA_VISIBLE_DEVICES']), requires_grad=False)
-        # edges_img2ont_ent = obj_probs.detach()
+        # edges_img2ont_ent = torch_tensor(obj_probs.data, dtype=torch_float32, device=CUDA_DEVICE, requires_grad=False)
+        edges_img2ont_ent = obj_probs.clone().detach()
         edges_ont2img_ent = edges_img2ont_ent.t()
 
         # edges_img2ont_pred = wrap(np.zeros((num_img_pred, num_ont_pred)))
-        edges_img2ont_pred = torch_zeros((num_img_pred, num_ont_pred))
+        edges_img2ont_pred = torch_zeros((num_img_pred, self.num_ont_pred), dtype=torch_float32, device=CUDA_DEVICE, requires_grad=False)
         edges_ont2img_pred = edges_img2ont_pred.t()
 
         ent_cls_logits = None
