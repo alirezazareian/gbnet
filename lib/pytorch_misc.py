@@ -2,14 +2,27 @@
 Miscellaneous functions that might be useful for pytorch
 """
 
-import h5py
-import numpy as np
-import torch
-from torch.autograd import Variable
 import os
-import dill as pkl
 from itertools import tee
-from torch import nn
+from h5py import File as h5py_File
+import numpy as np
+from dill import dump as pkl_dump, load as pkl_load
+from numpy import asarray as np_asarray, \
+    cumsum as np_cumsum, concatenate as np_concatenate, ones as np_ones, \
+    column_stack as np_column_stack, diag as np_diag, prod as np_prod, \
+    unravel_index as np_unravel_index, argsort as np_argsort, \
+    where as np_where, int32 as np_int32
+from numpy.random import choice as np_random_choice
+from torch import tensor as torch_tensor, int64 as torch_int64, \
+    FloatTensor as torch_FloatTensor, arange as torch_arange, \
+    gather as torch_gather, from_numpy as torch_from_numpy, \
+    Tensor as torch_Tensor
+from torch.cuda import current_device
+from torch.nn import Module
+
+
+CURRENT_DEVICE = current_device()
+
 
 def optimistic_restore(network, state_dict):
     mismatch = False
@@ -20,6 +33,7 @@ def optimistic_restore(network, state_dict):
             mismatch = True
         elif param.size() == own_state[name].size():
             own_state[name].copy_(param)
+            print(f'Successfully copied {name}')
         else:
             print("Network has {} with size {}, ckpt has {}".format(name,
                                                                     own_state[name].size(),
@@ -55,7 +69,7 @@ def get_ranking(predictions, labels, num_guesses=5):
 
     values, full_guesses = predictions.topk(predictions.size(1), dim=1)
     _, ranking = full_guesses.topk(full_guesses.size(1), dim=1, largest=False)
-    gt_ranks = torch.gather(ranking.data, 1, labels.data[:, None]).squeeze()
+    gt_ranks = torch_gather(ranking.data, 1, labels.data[:, None]).squeeze()
 
     guesses = full_guesses[:, :num_guesses]
     return gt_ranks, guesses
@@ -67,17 +81,17 @@ def cache(f):
     def cache_wrapper(fn, *args, **kwargs):
         if os.path.exists(fn):
             with open(fn, 'rb') as file:
-                data = pkl.load(file)
+                data = pkl_load(file)
         else:
             print("file {} not found, so rebuilding".format(fn))
             data = f(*args, **kwargs)
             with open(fn, 'wb') as file:
-                pkl.dump(data, file)
+                pkl_dump(data, file)
         return data
     return cache_wrapper
 
 
-class Flattener(nn.Module):
+class Flattener(Module):
     def __init__(self):
         """
         Flattens last 3 dimensions to make it only batch size, -1
@@ -90,64 +104,66 @@ class Flattener(nn.Module):
 def to_variable(f):
     """
     Decorator that pushes all the outputs to a variable
-    :param f: 
-    :return: 
+    :param f:
+    :return:
     """
     def variable_wrapper(*args, **kwargs):
         rez = f(*args, **kwargs)
         if isinstance(rez, tuple):
-            return tuple([Variable(x) for x in rez])
-        return Variable(rez)
+            return tuple([x if isinstance(x, torch_Tensor) else torch_tensor(x) for x in rez])
+        return rez if isinstance(x, torch_Tensor) else torch_tensor(rez)
     return variable_wrapper
 
 def arange(base_tensor, n=None):
     new_size = base_tensor.size(0) if n is None else n
     new_vec = base_tensor.new(new_size).long()
-    torch.arange(0, new_size, out=new_vec)
+    torch_arange(0, new_size, out=new_vec)
     return new_vec
 
 def onehot(vec, num_classes):
     onehot_result = vec.new(vec.size(0), num_classes).float().fill_(0)
     arange_inds = vec.new(vec.size(0)).long()
-    torch.arange(0, vec.size(0), out=arange_inds)
+    torch_arange(0, vec.size(0), out=arange_inds)
 
     onehot_result.view(-1)[vec + num_classes*arange_inds] = 1
     return onehot_result
+
 
 def onehot_logits(vec, num_classes, fill=1000):
     """
     Creates a [size, num_classes] torch FloatTensor where
     one_hot[i, vec[i]] = fill
-    
+
     :param vec: 1d torch tensor
     :param num_classes: int
     :param fill: value that we want + and - things to be.
-    :return: 
+    :return:
     """
     onehot_result = vec.new(vec.size(0), num_classes).float().fill_(-fill)
     arange_inds = vec.new(vec.size(0)).long()
-    torch.arange(0, vec.size(0), out=arange_inds)
+    torch_arange(0, vec.size(0), out=arange_inds)
 
     onehot_result.view(-1)[vec + num_classes*arange_inds] = fill
     return onehot_result
 
 to_onehot = onehot_logits
 
+
 def save_net(fname, net):
-    h5f = h5py.File(fname, mode='w')
-    for k, v in list(net.state_dict().items()):
-        h5f.create_dataset(k, data=v.cpu().numpy())
+    with h5py_File(fname, mode='w') as h5f:
+        for k, v in list(net.state_dict().items()):
+            h5f.create_dataset(k, data=v.cpu().numpy())
 
 
 def load_net(fname, net):
-    h5f = h5py.File(fname, mode='r')
-    for k, v in list(net.state_dict().items()):
-        param = torch.from_numpy(np.asarray(h5f[k]))
+    with h5py_File(fname, mode='r') as h5f:
+        for k, v in list(net.state_dict().items()):
+            param = torch_from_numpy(np_asarray(h5f[k]))
 
-        if v.size() != param.size():
-            print("On k={} desired size is {} but supplied {}".format(k, v.size(), param.size()))
-        else:
-            v.copy_(param)
+            if v.size() != param.size():
+                print("On k={} desired size is {} but supplied {}".format(k, v.size(), param.size()))
+            else:
+                v.copy_(param)
 
 
 def batch_index_iterator(len_l, batch_size, skip_end=True):
@@ -181,14 +197,14 @@ def batch_map(f, a, batch_size):
         print("Calling on {}".format(a[s:e].size()))
         rez.append(f(a[s:e]))
 
-    return torch.cat(rez)
+    return torch_cat(rez)
 
 
-def const_row(fill, l, volatile=False):
-    input_tok = Variable(torch.LongTensor([fill] * l),volatile=volatile)
-    if torch.cuda.is_available():
-        input_tok = input_tok.cuda()
-    return input_tok
+def const_row(fill, l, volatile=None):
+    return torch_tensor([fill] * l, dtype=torch_int64, device=CURRENT_DEVICE)
+    # if torch_cuda_is_available():
+    #     input_tok = input_tok.cuda()
+    # return input_tok
 
 
 def print_para(model):
@@ -203,8 +219,8 @@ def print_para(model):
     for p_name, p in model.named_parameters():
 
         if not ('bias' in p_name.split('.')[-1] or 'bn' in p_name.split('.')[-1]):
-            st[p_name] = ([str(x) for x in p.size()], np.prod(p.size()), p.requires_grad)
-        total_params += np.prod(p.size())
+            st[p_name] = ([str(x) for x in p.size()], np_prod(p.size()), p.requires_grad)
+        total_params += np_prod(p.size())
     for p_name, (size, prod, p_req_grad) in sorted(st.items(), key=lambda x: -x[1][1]):
         strings.append("{:<50s}: {:<16s}({:8d}) ({})".format(
             p_name, '[{}]'.format(','.join(size)), prod, 'grad' if p_req_grad else '    '
@@ -234,8 +250,8 @@ def nonintersecting_2d_inds(x):
     :param x: Size
     :return: a x*(x-1) array that is [(0,1), (0,2)... (0, x-1), (1,0), (1,2), ..., (x-1, x-2)]
     """
-    rs = 1 - np.diag(np.ones(x, dtype=np.int32))
-    relations = np.column_stack(np.where(rs))
+    rs = 1 - np_diag(np_ones(x, dtype=np_int32))
+    relations = np_column_stack(np_where(rs))
     return relations
 
 
@@ -255,11 +271,12 @@ def intersect_2d(x1, x2):
     res = (x1[..., None] == x2.T[None, ...]).all(1)
     return res
 
-def np_to_variable(x, is_cuda=True, dtype=torch.FloatTensor):
-    v = Variable(torch.from_numpy(x).type(dtype))
+def np_to_variable(x, is_cuda=True, dtype=torch_FloatTensor):
+    v = torch_from_numpy(x).type(dtype)
     if is_cuda:
         v = v.cuda()
     return v
+
 
 def gather_nd(x, index):
     """
@@ -311,14 +328,15 @@ def diagonal_inds(tensor):
     """
     Returns the indices required to go along first 2 dims of tensor in diag fashion
     :param tensor: thing
-    :return: 
+    :return:
     """
     assert tensor.dim() >= 2
     assert tensor.size(0) == tensor.size(1)
     size = tensor.size(0)
     arange_inds = tensor.new(size).long()
-    torch.arange(0, tensor.size(0), out=arange_inds)
+    torch_arange(0, tensor.size(0), out=arange_inds)
     return (size+1)*arange_inds
+
 
 def enumerate_imsize(im_sizes):
     s = 0
@@ -336,7 +354,7 @@ def argsort_desc(scores):
     :return: an array of size [numel(scores), dim(scores)] where each row is the index you'd
              need to get the score.
     """
-    return np.column_stack(np.unravel_index(np.argsort(-scores.ravel()), scores.shape))
+    return np_column_stack(np_unravel_index(np_argsort(-scores.ravel()), scores.shape))
 
 
 def unravel_index(index, dims):
@@ -345,7 +363,8 @@ def unravel_index(index, dims):
     for d in dims[::-1]:
         unraveled.append(index_cp % d)
         index_cp /= d
-    return torch.cat([x[:,None] for x in unraveled[::-1]], 1)
+    return torch_cat([x[:,None] for x in unraveled[::-1]], 1)
+
 
 def de_chunkize(tensor, chunks):
     s = 0
@@ -360,15 +379,15 @@ def random_choose(tensor, num):
         return tensor
 
     # Gotta do this in numpy because of https://github.com/pytorch/pytorch/issues/1868
-    rand_idx = np.random.choice(tensor.size(0), size=num, replace=False)
-    rand_idx = torch.LongTensor(rand_idx).cuda(tensor.get_device())
-    chosen = tensor[rand_idx].contiguous()
+    rand_idx = np_random_choice(tensor.size(0), size=num, replace=False)
+    rand_idx = torch_tensor(rand_idx, dtype=torch_int64, device=tensor.get_device())
+    return tensor[rand_idx].contiguous()
 
     # rand_values = tensor.new(tensor.size(0)).float().normal_()
     # _, idx = torch.sort(rand_values)
     #
     # chosen = tensor[idx[:num]].contiguous()
-    return chosen
+    # return chosen
 
 
 def transpose_packed_sequence_inds(lengths):
@@ -380,7 +399,7 @@ def transpose_packed_sequence_inds(lengths):
 
     new_inds = []
     new_lens = []
-    cum_add = np.cumsum([0] + lengths)
+    cum_add = np_cumsum([0] + lengths)
     max_len = lengths[0]
     length_pointer = len(lengths) - 1
     for i in range(max_len):
@@ -389,7 +408,7 @@ def transpose_packed_sequence_inds(lengths):
         new_inds.append(cum_add[:(length_pointer+1)].copy())
         cum_add[:(length_pointer+1)] += 1
         new_lens.append(length_pointer+1)
-    new_inds = np.concatenate(new_inds, 0)
+    new_inds = np_concatenate(new_inds, 0)
     return new_inds, new_lens
 
 
@@ -398,21 +417,21 @@ def right_shift_packed_sequence_inds(lengths):
     :param lengths: e.g. [2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1]
     :return: perm indices for the old stuff (TxB) to shift it right 1 slot so as to accomodate
              BOS toks
-             
+
              visual example: of lengths = [4,3,1,1]
     before:
-    
+
         a (0)  b (4)  c (7) d (8)
         a (1)  b (5)
         a (2)  b (6)
         a (3)
-        
+
     after:
-    
+
         bos a (0)  b (4)  c (7)
         bos a (1)
         bos a (2)
-        bos              
+        bos
     """
     cur_ind = 0
     inds = []

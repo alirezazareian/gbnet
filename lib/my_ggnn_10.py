@@ -16,9 +16,11 @@ from torch.nn.functional import softmax as F_softmax
 import numpy as np
 import pickle
 from os import environ as os_environ
-from lib.my_util import MLP
+from lib.my_util import MLP, adj_normalize
+
 
 CUDA_DEVICE = current_device()
+
 
 def wrap(nparr):
     return torch_tensor(nparr, dtype=torch_float32, device=CUDA_DEVICE, requires_grad=False)
@@ -28,7 +30,7 @@ def arange(num):
 
 class GGNN(Module):
     def __init__(self, emb_path, graph_path, time_step_num=3, hidden_dim=512, output_dim=512,
-                 use_embedding=True, use_knowledge=True, refine_obj_cls=False, num_ents=151, num_preds=51, config=None, with_clean_classifier=None, with_transfer=None, num_obj_cls=None, num_rel_cls=None):
+                 use_embedding=True, use_knowledge=True, refine_obj_cls=False, num_ents=151, num_preds=51, config=None, with_clean_classifier=None, with_transfer=None, num_obj_cls=None, num_rel_cls=None, sa=None):
         super(GGNN, self).__init__()
         self.time_step_num = time_step_num
 
@@ -131,6 +133,7 @@ class GGNN(Module):
 
         self.with_clean_classifier = with_clean_classifier
         self.with_transfer = with_transfer
+        self.sa = sa
 
         if self.with_clean_classifier:
             self.fc_output_proj_img_pred_clean = MLP([hidden_dim, hidden_dim, hidden_dim], act_fn='ReLU', last_act=False)
@@ -140,7 +143,7 @@ class GGNN(Module):
                 self.fc_output_proj_img_ent_clean = MLP([hidden_dim, hidden_dim, hidden_dim], act_fn='ReLU', last_act=False)
                 self.fc_output_proj_ont_ent_clean = MLP([hidden_dim, hidden_dim, hidden_dim], act_fn='ReLU', last_act=False)
 
-            if self.with_transfer:
+            if self.with_transfer is True:
                 print("!!!!!!!!!With Confusion Matrix Channel!!!!!")
                 pred_adj_np = np.load(config.MODEL.CONF_MAT_FREQ_TRAIN)
                 # pred_adj_np = 1.0 - pred_adj_np
@@ -149,6 +152,11 @@ class GGNN(Module):
                 pred_adj_np[0, 0] = 1.0
                 # adj_i_j means the baseline outputs category j, but the ground truth is i.
                 pred_adj_np = pred_adj_np / (pred_adj_np.sum(-1)[:, None] + 1e-8)
+                if self.sa is True:
+                    pred_adj_np = adj_normalize(pred_adj_np)
+                    print(f'SA: Used adj_normalize')
+                else:
+                    print(f'No SA: Not using adj_normalize.self.sa={self.sa}')
                 self.pred_adj_nor = torch_tensor(pred_adj_np, dtype=torch_float32, device=CUDA_DEVICE)
 
 
@@ -288,6 +296,5 @@ class GGNN(Module):
                     pred_cls_logits_clean = (pred_adj_nor @ pred_cls_logits_clean.T).T
 
                 pred_cls_logits = pred_cls_logits_clean
-
 
         return pred_cls_logits, ent_cls_logits
