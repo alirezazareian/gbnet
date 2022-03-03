@@ -121,6 +121,9 @@ class ModelConfig(object):
         self.MODEL.LRGA.IN_CHANNELS = None
         self.MODEL.LRGA.HIDDEN_CHANNELS = None
 
+        self.MODEL.GN = Munch()
+        self.MODEL.GN.NUM_GROUPS = None
+
         self.parser = self.setup_parser()
         if args_str is None:
             self.args = vars(self.parser.parse_args())

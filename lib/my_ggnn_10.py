@@ -8,7 +8,7 @@ from torch import tensor as torch_tensor, float32 as torch_float32, \
     sigmoid as torch_sigmoid, tanh as torch_tanh, cat as torch_cat, \
     sum as torch_sum, abs as torch_abs
 from torch.cuda import current_device
-from torch.nn import Module, Linear, ModuleList, BatchNorm1d, Sequential, ReLU
+from torch.nn import Module, Linear, ModuleList, GroupNorm, Sequential, ReLU
 from torch.nn.functional import softmax as F_softmax, relu as F_relu
 import numpy as np
 import pickle
@@ -39,11 +39,10 @@ class GGNN(Module):
         self.use_lrga = config.MODEL.LRGA.USE_LRGA
         self.k = config.MODEL.LRGA.K
         self.dropout = config.MODEL.LRGA.DROPOUT
-        # self.in_channels = config.MODEL.LRGA.IN_CHANNELS # What should this be?
-        self.in_channels = hidden_dim # What should this be?
-        # self.hidden_channels = config.MODEL.LRGA.HIDDEN_CHANNELS # TODO: is this even possible if vr has varying shapes?
-        self.hidden_channels = hidden_dim # TODO: is this even possible if vr has varying shapes?
+        self.in_channels = hidden_dim
+        self.hidden_channels = hidden_dim
         self.out_channels = hidden_dim
+        self.num_groups = config.MODEL.GN.NUM_GROUPS
 
         if self.use_lrga is True:
             self.attention = ModuleList()
@@ -54,7 +53,7 @@ class GGNN(Module):
                 self.attention.append(LowRankAttention(self.k, self.hidden_channels, self.dropout))
                 self.dimension_reduce.append(Sequential(Linear(2*self.k + self.hidden_channels, self.hidden_channels)))
             self.dimension_reduce[-1] = Sequential(Linear(2*self.k + self.hidden_channels, self.out_channels))
-            self.bn = ModuleList([BatchNorm1d(self.hidden_channels) for _ in range(self.time_step_num)])
+            self.gn = ModuleList([GroupNorm(self.num_groups, self.hidden_channels) for _ in range(self.time_step_num-1)])
 
         if use_embedding:
             with open(emb_path, 'rb') as fin:
@@ -294,7 +293,7 @@ class GGNN(Module):
                 if t != self.time_step_num - 1:
                     # No ReLU nor batchnorm for last layer
                     x = F_relu(x)
-                    x = self.bn[t](x)
+                    x = self.gn[t](x)
                 nodes_img_pred_new = x
 
             nodes_ont_ent = nodes_ont_ent_new
