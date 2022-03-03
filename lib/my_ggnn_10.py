@@ -2,21 +2,18 @@
 # From my_ggnn_09: Dynamically connecting entities to ontology too
 # Also a minor change: img2ont edges are now normalized over ont rather than img
 ##################################################################
-
-import os, sys
-import torch
 from torch import tensor as torch_tensor, float32 as torch_float32, \
     int64 as torch_int64, arange as torch_arange, mm as torch_mm, \
     zeros as torch_zeros, \
     sigmoid as torch_sigmoid, tanh as torch_tanh, cat as torch_cat, \
     sum as torch_sum, abs as torch_abs
 from torch.cuda import current_device
-from torch.nn import Module, Linear
-from torch.nn.functional import softmax as F_softmax
+from torch.nn import Module, Linear, ModuleList, BatchNorm1d, Sequential, ReLU
+from torch.nn.functional import softmax as F_softmax, relu as F_relu
 import numpy as np
 import pickle
-from os import environ as os_environ
 from lib.my_util import MLP, adj_normalize
+from lib.lrga import LowRankAttention
 
 
 CUDA_DEVICE = current_device()
@@ -29,13 +26,35 @@ def arange(num):
     return torch_arange(num, dtype=torch_int64, device=CUDA_DEVICE)
 
 class GGNN(Module):
-    def __init__(self, emb_path, graph_path, time_step_num=3, hidden_dim=512, output_dim=512,
-                 use_embedding=True, use_knowledge=True, refine_obj_cls=False, num_ents=151, num_preds=51, config=None, with_clean_classifier=None, with_transfer=None, num_obj_cls=None, num_rel_cls=None, sa=None):
+    def __init__(self, emb_path, graph_path, time_step_num=3, hidden_dim=512, \
+                 output_dim=512, use_embedding=True, use_knowledge=True, \
+                 refine_obj_cls=False, num_ents=151, num_preds=51, \
+                 config=None, with_clean_classifier=None, with_transfer=None, \
+                 num_obj_cls=None, num_rel_cls=None, sa=None, lrga=None):
         super(GGNN, self).__init__()
         self.time_step_num = time_step_num
 
         self.with_clean_classifier = with_clean_classifier
         self.with_transfer = with_transfer
+        self.use_lrga = config.MODEL.LRGA.USE_LGRA
+        self.k = config.MODEL.LRGA.K
+        self.dropout = config.MODEL.LRGA.DROPOUT
+        # self.in_channels = config.MODEL.LRGA.IN_CHANNELS # What should this be?
+        self.in_channels = hidden_dim # What should this be?
+        # self.hidden_channels = config.MODEL.LRGA.HIDDEN_CHANNELS # TODO: is this even possible if vr has varying shapes?
+        self.hidden_channels = hidden_dim # TODO: is this even possible if vr has varying shapes?
+        self.out_channels = hidden_dim
+
+        if self.use_lrga is True:
+            self.attention = ModuleList()
+            self.dimension_reduce = ModuleList()
+            self.attention.append(LowRankAttention(self.k, self.in_channels, self.dropout))
+            self.dimension_reduce.append(Sequential(Linear(2*self.k + self.hidden_channels, self.hidden_channels), ReLU()))
+            for _ in range(self.time_step_num):
+                self.attention.append(LowRankAttention(self.k, self.hidden_channels, self.dropout))
+                self.dimension_reduce.append(Sequential(Linear(2*self.k + self.hidden_channels, self.hidden_channels)))
+            self.dimension_reduce[-1] = Sequential(Linear(2*self.k + self.hidden_channels, self.out_channels))
+            self.bn = ModuleList([BatchNorm1d(self.hidden_channels) for _ in range(self.time_step_num)])
 
         if use_embedding:
             with open(emb_path, 'rb') as fin:
@@ -161,6 +180,7 @@ class GGNN(Module):
 
 
     def forward(self, rel_inds, obj_probs, obj_fmaps, vr):
+        # This is a per_image representation, not an embedding.
         num_img_ent = obj_probs.size(0)
         num_img_pred = rel_inds.size(0)
 
@@ -184,12 +204,9 @@ class GGNN(Module):
         edges_img_subj2pred = edges_img_pred2subj.t()
         edges_img_obj2pred = edges_img_pred2obj.t()
 
-        # edges_img2ont_ent = wrap(obj_probs.data.cpu().numpy())
-        # edges_img2ont_ent = torch_tensor(obj_probs.data, dtype=torch_float32, device=CUDA_DEVICE, requires_grad=False)
         edges_img2ont_ent = obj_probs.clone().detach()
         edges_ont2img_ent = edges_img2ont_ent.t()
 
-        # edges_img2ont_pred = wrap(np.zeros((num_img_pred, num_ont_pred)))
         edges_img2ont_pred = torch_zeros((num_img_pred, self.num_ont_pred), dtype=torch_float32, device=CUDA_DEVICE, requires_grad=False)
         edges_ont2img_pred = edges_img2ont_pred.t()
 
@@ -217,35 +234,28 @@ class GGNN(Module):
             message_send_img_ent = self.fc_mp_send_img_ent(nodes_img_ent)
             message_send_img_pred = self.fc_mp_send_img_pred(nodes_img_pred)
 
+            # NOTE: there's some vectorization opportunity right here.
             message_received_ont_ent = self.fc_mp_receive_ont_ent(torch_cat(
                 [torch_mm(edges_ont_ent2ent[i].t(), message_send_ont_ent) for i in range(num_edge_types_ent2ent)] +
                 [torch_mm(edges_ont_pred2ent[i].t(), message_send_ont_pred) for i in range(num_edge_types_pred2ent)] +
-                # [torch_mm(edges_img2ont_ent.t(), message_send_img_ent),]
                 [torch_mm(edges_ont2img_ent, message_send_img_ent),]
             , 1))
 
             message_received_ont_pred = self.fc_mp_receive_ont_pred(torch_cat(
                 [torch_mm(edges_ont_ent2pred[i].t(), message_send_ont_ent) for i in range(num_edge_types_ent2pred)] +
                 [torch_mm(edges_ont_pred2pred[i].t(), message_send_ont_pred) for i in range(num_edge_types_pred2pred)] +
-                # [torch_mm(edges_img2ont_pred.t(), message_send_img_pred),]
                 [torch_mm(edges_ont2img_pred, message_send_img_pred),]
             , 1))
 
             message_received_img_ent = self.fc_mp_receive_img_ent(torch_cat([
-                # torch_mm(edges_img_pred2subj.t(), message_send_img_pred),
                 torch_mm(edges_img_subj2pred, message_send_img_pred),
-                # torch_mm(edges_img_pred2obj.t(), message_send_img_pred),
                 torch_mm(edges_img_obj2pred, message_send_img_pred),
-                # torch_mm(edges_ont2img_ent.t(), message_send_ont_ent),
                 torch_mm(edges_img2ont_ent, message_send_ont_ent),
             ], 1))
 
             message_received_img_pred = self.fc_mp_receive_img_pred(torch_cat([
-                # torch_mm(edges_img_subj2pred.t(), message_send_img_ent),
                 torch_mm(edges_img_pred2subj, message_send_img_ent),
-                # torch_mm(edges_img_obj2pred.t(), message_send_img_ent),
                 torch_mm(edges_img_pred2obj, message_send_img_ent),
-                # torch_mm(edges_ont2img_pred.t(), message_send_ont_pred),
                 torch_mm(edges_img2ont_pred, message_send_ont_pred),
             ], 1))
 
@@ -276,6 +286,17 @@ class GGNN(Module):
 
             debug_info[f'relative_state_change_{t}'] = [relative_state_change_ont_ent, relative_state_change_ont_pred, relative_state_change_img_ent, relative_state_change_img_pred]
 
+            if self.use_lrga is True:
+                x = nodes_img_pred
+                x_local = nodes_img_pred_new
+                x_global = self.attention[t](x)
+                x = self.dimension_reduce[t](torch_cat((x_global, x_local), dim=1))
+                if t != self.time_step_num - 1:
+                    # No ReLU nor batchnorm for last layer
+                    x = F_relu(x)
+                    x = self.bn[t](x)
+                nodes_img_pred_new = x
+
             nodes_ont_ent = nodes_ont_ent_new
             nodes_ont_pred = nodes_ont_pred_new
             nodes_img_ent = nodes_img_ent_new
@@ -286,6 +307,9 @@ class GGNN(Module):
             edges_ont2img_pred = edges_img2ont_pred.t()
 
             if refine_obj_cls:
+                if self.with_transfer or self.with_clean_classifier:
+                    raise NotImplementedError
+
                 ent_cls_logits = torch_mm(self.fc_output_proj_img_ent(nodes_img_ent), self.fc_output_proj_ont_ent(nodes_ont_ent).t())
                 edges_img2ont_ent = F_softmax(ent_cls_logits, dim=1)
                 edges_ont2img_ent = edges_img2ont_ent.t()
@@ -296,5 +320,6 @@ class GGNN(Module):
                     pred_cls_logits_clean = (pred_adj_nor @ pred_cls_logits_clean.T).T
 
                 pred_cls_logits = pred_cls_logits_clean
+
 
         return pred_cls_logits, ent_cls_logits

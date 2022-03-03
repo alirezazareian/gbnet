@@ -21,7 +21,6 @@ def stanford_metadata_path(fn):
 # Update these with where your data is stored ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 VG_IMAGES = os.path.join(ROOT_PATH, 'vgimg') # '/path/to/visual/genome/images'
-RCNN_CHECKPOINT_FN = path('checkpoints/vgdet/vg-24.tar')
 
 IM_DATA_FN = stanford_metadata_path('image_data.json')
 VG_SGG_FN = stanford_metadata_path('VG-SGG.h5')
@@ -108,11 +107,19 @@ class ModelConfig(object):
         self.MODEL = Munch()
         self.MODEL.DEVICE = None
         self.MODEL.CONF_MAT_FREQ_TRAIN = None
+
         self.MODEL.ROI_RELATION_HEAD = Munch()
         self.MODEL.ROI_RELATION_HEAD.BPL_HIDDEN_DIM = None
         self.MODEL.ROI_RELATION_HEAD.BPL_POOLING_DIM = None
         self.MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER = None
         self.MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER = None
+
+        self.MODEL.LRGA = Munch()
+        self.MODEL.LRGA.USE_LGRA = None
+        self.MODEL.LRGA.K = None
+        self.MODEL.LRGA.DROPOUT = None
+        self.MODEL.LRGA.IN_CHANNELS = None
+        self.MODEL.LRGA.HIDDEN_CHANNELS = None
 
         self.parser = self.setup_parser()
         if args_str is None:
