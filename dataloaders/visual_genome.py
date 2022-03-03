@@ -58,6 +58,7 @@ class VG(Dataset):
         self.filter_non_overlap = filter_non_overlap
         self.filter_duplicate_rels = filter_duplicate_rels and self.mode == 'train'
 
+        self.ind_to_classes, self.ind_to_predicates = load_info(dict_file)  # contiguous 151, 51 containing __background__
         self.split_mask, self.gt_boxes, self.gt_classes, self.relationships = load_graphs(
             self.roidb_file, self.mode, num_im, num_val_im=num_val_im,
             filter_empty_rels=filter_empty_rels,
@@ -65,12 +66,11 @@ class VG(Dataset):
             dict_file=dict_file,
             with_clean_classifier=with_clean_classifier,
             get_state=get_state,
+            ind_to_predicates=self.ind_to_predicates,
         )
 
         self.filenames = load_image_filenames(image_file)
         self.filenames = [self.filenames[i] for i in np_where(self.split_mask)[0]]
-
-        self.ind_to_classes, self.ind_to_predicates = load_info(dict_file)
 
         if use_proposals:
             print("Loading proposals", flush=True)
@@ -274,7 +274,7 @@ def load_image_filenames(image_file, image_dir=VG_IMAGES):
 
 
 def load_graphs(graphs_file, mode='train', num_im=-1, num_val_im=0, filter_empty_rels=True,
-                filter_non_overlap=False, dict_file=None, with_clean_classifier=None, get_state=None):
+                filter_non_overlap=False, dict_file=None, with_clean_classifier=None, ind_to_predicates=None, get_state=None):
     """
     Load the file containing the GT boxes and relations, as well as the dataset split
     :param graphs_file: HDF5
@@ -359,8 +359,10 @@ def load_graphs(graphs_file, mode='train', num_im=-1, num_val_im=0, filter_empty
         pred_count += 1
 
     if with_clean_classifier:
+        print('Dataloader using BPL')
         root_classes = pred_topk
     else:
+        print('Dataloader NOT using BPL')
         root_classes = None
     if get_state:
         root_classes = None
