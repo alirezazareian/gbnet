@@ -36,7 +36,7 @@ class GGNN(Module):
 
         self.with_clean_classifier = with_clean_classifier
         self.with_transfer = with_transfer
-        self.use_lrga = config.MODEL.LRGA.USE_LGRA
+        self.use_lrga = config.MODEL.LRGA.USE_LRGA
         self.k = config.MODEL.LRGA.K
         self.dropout = config.MODEL.LRGA.DROPOUT
         # self.in_channels = config.MODEL.LRGA.IN_CHANNELS # What should this be?

@@ -115,7 +115,7 @@ class ModelConfig(object):
         self.MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER = None
 
         self.MODEL.LRGA = Munch()
-        self.MODEL.LRGA.USE_LGRA = None
+        self.MODEL.LRGA.USE_LRGA = None
         self.MODEL.LRGA.K = None
         self.MODEL.LRGA.DROPOUT = None
         self.MODEL.LRGA.IN_CHANNELS = None
