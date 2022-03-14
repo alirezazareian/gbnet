@@ -314,7 +314,7 @@ class GGNN(Module):
                 edges_ont2img_ent = edges_img2ont_ent.t()
 
             if with_clean_classifier:
-                pred_cls_logits_clean = torch_mm(self.fc_output_proj_img_pred(nodes_img_pred), self.fc_output_proj_ont_pred_clean(nodes_ont_pred).t())
+                pred_cls_logits_clean = torch_mm(self.fc_output_proj_img_pred_clean(nodes_img_pred), self.fc_output_proj_ont_pred_clean(nodes_ont_pred).t())
                 if with_transfer:
                     pred_cls_logits_clean = (pred_adj_nor @ pred_cls_logits_clean.T).T
 
