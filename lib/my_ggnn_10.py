@@ -298,8 +298,6 @@ class GGNN(Module):
             nodes_img_pred = nodes_img_pred_new
 
             pred_cls_logits = torch_mm(self.fc_output_proj_img_pred(nodes_img_pred), self.fc_output_proj_ont_pred(nodes_ont_pred).t())
-            edges_img2ont_pred = F_softmax(pred_cls_logits, dim=1)
-            edges_ont2img_pred = edges_img2ont_pred.t()
 
             if with_clean_classifier:
                 pred_cls_logits_clean = torch_mm(self.fc_output_proj_img_pred_clean(nodes_img_pred), self.fc_output_proj_ont_pred_clean(nodes_ont_pred).t())
@@ -307,6 +305,9 @@ class GGNN(Module):
                     pred_cls_logits_clean = (pred_adj_nor @ pred_cls_logits_clean.T).T
 
                 pred_cls_logits = pred_cls_logits_clean
+
+            edges_img2ont_pred = F_softmax(pred_cls_logits, dim=1)
+            edges_ont2img_pred = edges_img2ont_pred.t()
 
             if refine_obj_cls:
                 ent_cls_logits = torch_mm(self.fc_output_proj_img_ent(nodes_img_ent), self.fc_output_proj_ont_ent(nodes_ont_ent).t())
