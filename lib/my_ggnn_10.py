@@ -157,10 +157,6 @@ class GGNN(Module):
             self.fc_output_proj_img_pred_clean = MLP([hidden_dim, hidden_dim, hidden_dim], act_fn='ReLU', last_act=False)
             self.fc_output_proj_ont_pred_clean = MLP([hidden_dim, hidden_dim, hidden_dim], act_fn='ReLU', last_act=False)
 
-            if self.refine_obj_cls:
-                self.fc_output_proj_img_ent_clean = MLP([hidden_dim, hidden_dim, hidden_dim], act_fn='ReLU', last_act=False)
-                self.fc_output_proj_ont_ent_clean = MLP([hidden_dim, hidden_dim, hidden_dim], act_fn='ReLU', last_act=False)
-
             if self.with_transfer is True:
                 print("!!!!!!!!!With Confusion Matrix Channel!!!!!")
                 pred_adj_np = np.load(config.MODEL.CONF_MAT_FREQ_TRAIN)
@@ -305,14 +301,6 @@ class GGNN(Module):
             edges_img2ont_pred = F_softmax(pred_cls_logits, dim=1)
             edges_ont2img_pred = edges_img2ont_pred.t()
 
-            if refine_obj_cls:
-                if self.with_transfer or self.with_clean_classifier:
-                    raise NotImplementedError
-
-                ent_cls_logits = torch_mm(self.fc_output_proj_img_ent(nodes_img_ent), self.fc_output_proj_ont_ent(nodes_ont_ent).t())
-                edges_img2ont_ent = F_softmax(ent_cls_logits, dim=1)
-                edges_ont2img_ent = edges_img2ont_ent.t()
-
             if with_clean_classifier:
                 pred_cls_logits_clean = torch_mm(self.fc_output_proj_img_pred_clean(nodes_img_pred), self.fc_output_proj_ont_pred_clean(nodes_ont_pred).t())
                 if with_transfer:
@@ -320,5 +308,8 @@ class GGNN(Module):
 
                 pred_cls_logits = pred_cls_logits_clean
 
-
+            if refine_obj_cls:
+                ent_cls_logits = torch_mm(self.fc_output_proj_img_ent(nodes_img_ent), self.fc_output_proj_ont_ent(nodes_ont_ent).t())
+                edges_img2ont_ent = F_softmax(ent_cls_logits, dim=1)
+                edges_ont2img_ent = edges_img2ont_ent.t()
         return pred_cls_logits, ent_cls_logits
