@@ -23,8 +23,7 @@ from torch.nn import Module
 
 CURRENT_DEVICE = current_device()
 
-
-def optimistic_restore(network, state_dict):
+def optimistic_restore(network, state_dict, skip_clean=True):
     mismatch = False
     own_state = network.state_dict()
     for name, param in state_dict.items():
@@ -32,8 +31,10 @@ def optimistic_restore(network, state_dict):
             print("Unexpected key {} in state_dict with size {}".format(name, param.size()))
             mismatch = True
         elif param.size() == own_state[name].size():
+            if '_clean' in name and skip_clean is True:
+                print(f'optimistic_restore: skipping _clean param {name}')
+                continue
             own_state[name].copy_(param)
-            print(f'Successfully copied {name}')
         else:
             print("Network has {} with size {}, ckpt has {}".format(name,
                                                                     own_state[name].size(),
@@ -45,7 +46,6 @@ def optimistic_restore(network, state_dict):
         print("We couldn't find {}".format(','.join(missing)))
         mismatch = True
     return not mismatch
-
 
 def pairwise(iterable):
     "s -> (s0,s1), (s1,s2), (s2, s3), ..."
