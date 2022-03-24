@@ -152,10 +152,27 @@ class GGNN(Module):
         self.with_clean_classifier = with_clean_classifier
         self.with_transfer = with_transfer
         self.sa = sa
+        self.use_ontological_adjustment = config.MODEL.USE_ONTOLOGICAL_ADJUSTMENT
+
+        if self.use_ontological_adjustment is True:
+            # 4x51x51 => 51x51
+            print('my_ggnn_10: using use_ontological_adjustment')
+            ontological_preds = torch_tensor(self.adjmtx_pred2pred, dtype=torch_float32, device=CUDA_DEVICE).sum(axis=0)
+            ontological_preds[0, :] = 0.0
+            ontological_preds[:, 0] = 0.0
+            ontological_preds[0, 0] = 1.0
+            ontological_preds = ontological_preds / (ontological_preds.sum(-1)[:, None] + 1e-8)
+            self.ontological_preds = ontological_preds
+            # TODO: normalize like preds confusion matrix
+            # adj_normalize(pred_adj_np)
 
         if self.with_clean_classifier:
             self.fc_output_proj_img_pred_clean = MLP([hidden_dim, hidden_dim, hidden_dim], act_fn='ReLU', last_act=False)
             self.fc_output_proj_ont_pred_clean = MLP([hidden_dim, hidden_dim, hidden_dim], act_fn='ReLU', last_act=False)
+
+            if self.refine_obj_cls:
+                self.fc_output_proj_img_ent_clean = MLP([hidden_dim, hidden_dim, hidden_dim], act_fn='ReLU', last_act=False)
+                self.fc_output_proj_ont_ent_clean = MLP([hidden_dim, hidden_dim, hidden_dim], act_fn='ReLU', last_act=False)
 
             if self.with_transfer is True:
                 print("!!!!!!!!!With Confusion Matrix Channel!!!!!")
@@ -306,11 +323,14 @@ class GGNN(Module):
 
                 pred_cls_logits = pred_cls_logits_clean
 
+            if self.use_ontological_adjustment is True:
+                pred_cls_logits = (self.ontological_preds @ pred_cls_logits.T).T
+
             edges_img2ont_pred = F_softmax(pred_cls_logits, dim=1)
             edges_ont2img_pred = edges_img2ont_pred.t()
-
             if refine_obj_cls:
                 ent_cls_logits = torch_mm(self.fc_output_proj_img_ent(nodes_img_ent), self.fc_output_proj_ont_ent(nodes_ont_ent).t())
                 edges_img2ont_ent = F_softmax(ent_cls_logits, dim=1)
                 edges_ont2img_ent = edges_img2ont_ent.t()
+
         return pred_cls_logits, ent_cls_logits
