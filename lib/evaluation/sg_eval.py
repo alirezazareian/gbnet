@@ -382,7 +382,6 @@ def eval_entry(mode, gt_entry, pred_entry, evaluator, evaluator_multiple_preds, 
         mask = np_in1d(gt_entry_rel['gt_relations'][:, -1], pred_id)
         gt_entry_rel['gt_relations'] = gt_entry_rel['gt_relations'][mask, :]
         if gt_entry_rel['gt_relations'].shape[0] == 0:
-            print(f'sg_eval.eval_entry: pred {pred_name} match no gt_relations in this gt_entry')
             continue
 
         evaluator_rel[mode].evaluate_scene_graph_entry(
