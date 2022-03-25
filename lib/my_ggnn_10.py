@@ -153,18 +153,25 @@ class GGNN(Module):
         self.with_transfer = with_transfer
         self.sa = sa
         self.use_ontological_adjustment = config.MODEL.USE_ONTOLOGICAL_ADJUSTMENT
+        self.normalize_eoa = config.MODEL.NORMALIZE_EOA
 
         if self.use_ontological_adjustment is True:
             # 4x51x51 => 51x51
             print('my_ggnn_10: using use_ontological_adjustment')
-            ontological_preds = torch_tensor(self.adjmtx_pred2pred, dtype=torch_float32, device=CUDA_DEVICE).sum(axis=0)
+            # ontological_preds = torch_tensor(self.adjmtx_pred2pred, dtype=torch_float32, device=CUDA_DEVICE).sum(axis=0)
+            ontological_preds = self.adjmtx_pred2pred.sum(axis=0)
             ontological_preds[0, :] = 0.0
             ontological_preds[:, 0] = 0.0
             ontological_preds[0, 0] = 1.0
             ontological_preds = ontological_preds / (ontological_preds.sum(-1)[:, None] + 1e-8)
-            self.ontological_preds = ontological_preds
-            # TODO: normalize like preds confusion matrix
-            # adj_normalize(pred_adj_np)
+            if self.normalize_eoa is True:
+                    ontological_preds = adj_normalize(ontological_preds)
+                    print(f'EOA-N: Used adj_normalize')
+                else:
+                    print(f'EOA-N: Not using adj_normalize. self.eoa_n={self.normalize_eoa}')
+            self.ontological_preds = torch_tensor(ontological_preds, dtype=torch_float32, device=CUDA_DEVICE)
+        else:
+            print(f'my_ggnn_10: not using use_ontological_adjustment. self.use_ontological_adjustment={self.use_ontological_adjustment}')
 
         if self.with_clean_classifier:
             self.fc_output_proj_img_pred_clean = MLP([hidden_dim, hidden_dim, hidden_dim], act_fn='ReLU', last_act=False)
