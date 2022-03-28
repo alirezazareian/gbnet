@@ -1,18 +1,19 @@
 """
 Adapted from Danfei Xu. In particular, slow code was removed
 """
-import numpy as np
+from math import isnan as math_isnan
+from functools import reduce
+from pickle import dump as pickle_dump
 from numpy import mean as np_mean, column_stack as np_column_stack, \
                   ones as np_ones, zeros as np_zeros, union1d as np_union1d, \
                   all as np_all, where as np_where, \
-                  in1d as np_in1d, concatenate as np_concatenate
-import math
-import pickle
-from functools import reduce
+                  in1d as np_in1d, concatenate as np_concatenate, \
+                  save as np_save, set_printoptions as np_set_printoptions
 from lib.pytorch_misc import intersect_2d, argsort_desc
 from lib.fpn.box_intersections_cpu.bbox import bbox_overlaps
 from config import MODES
-np.set_printoptions(precision=3)
+np_set_printoptions(precision=3)
+
 
 class BasicSceneGraphEvaluator:
     def __init__(self, mode, multiple_preds=False):
@@ -38,7 +39,7 @@ class BasicSceneGraphEvaluator:
         return res
 
     def save(self, fn):
-        np.save(fn, self.result_dict)
+        np_save(fn, self.result_dict)
 
     def print_stats(self):
         if self.multiple_preds:
@@ -46,17 +47,14 @@ class BasicSceneGraphEvaluator:
         else:
             recall_method = 'recall with constraint'
         output = {}
-        print('======================' + self.mode + '  ' + recall_method + '============================')
+        print(f'======================{self.mode}  {recall_method}============================', flush=True)
         for k, v in self.result_dict[self.mode + '_recall'].items():
-            print('R@%i: %f' % (k, np_mean(v)))
+            print('R@%i: %f' % (k, np_mean(v)), flush=True)
             output['R@%i' % k] = np_mean(v)
         return output
 
     def get_stats(self):
-        if self.multiple_preds:
-            recall_method = 'recall without constraint'
-        else:
-            recall_method = 'recall with constraint'
+        recall_method = 'recall without constraint' if self.multiple_preds else 'recall with constraint'
         output = {}
         for k, v in self.result_dict[self.mode + '_recall'].items():
             output['R@%i' % k] = np_mean(v)
@@ -142,31 +140,7 @@ def evaluate_from_dict(gt_entry, pred_entry, mode, result_dict, multiple_preds=F
         result_dict[mode + '_recall'][k].append(rec_i)
     return pred_to_gt, pred_5ples, rel_scores
 
-    # print(" ".join(["R@{:2d}: {:.3f}".format(k, v[-1]) for k, v in result_dict[mode + '_recall'].items()]))
-    # Deal with visualization later
-    # # Optionally, log things to a separate dictionary
-    # if viz_dict is not None:
-    #     # Caution: pred scores has changed (we took off the 0 class)
-    #     gt_rels_scores = pred_scores[
-    #         gt_rels[:, 0],
-    #         gt_rels[:, 1],
-    #         gt_rels[:, 2] - 1,
-    #     ]
-    #     # gt_rels_scores_cls = gt_rels_scores * pred_class_scores[
-    #     #         gt_rels[:, 0]] * pred_class_scores[gt_rels[:, 1]]
-    #
-    #     viz_dict[mode + '_pred_rels'] = pred_5ples.tolist()
-    #     viz_dict[mode + '_pred_rels_scores'] = max_pred_scores.tolist()
-    #     viz_dict[mode + '_pred_rels_scores_cls'] = max_rel_scores.tolist()
-    #     viz_dict[mode + '_gt_rels_scores'] = gt_rels_scores.tolist()
-    #     viz_dict[mode + '_gt_rels_scores_cls'] = gt_rels_scores_cls.tolist()
-    #
-    #     # Serialize pred2gt matching as a list of lists, where each sublist is of the form
-    #     # pred_ind, gt_ind1, gt_ind2, ....
-    #     viz_dict[mode + '_pred2gt_rel'] = pred_to_gt
 
-
-###########################
 def evaluate_recall(gt_rels, gt_boxes, gt_classes,
                     pred_rels, pred_boxes, pred_classes, rel_scores=None, cls_scores=None,
                     iou_thresh=0.5, phrdet=False):
@@ -199,7 +173,7 @@ def evaluate_recall(gt_rels, gt_boxes, gt_classes,
     assert pred_rels[:,:2].max() < pred_classes.shape[0]
 
     # Exclude self rels
-    # assert np.all(pred_rels[:,0] != pred_rels[:,1])
+    # assert np_all(pred_rels[:,0] != pred_rels[:,1])
     assert np_all(pred_rels[:,2] > 0)
 
     pred_triplets, pred_triplet_boxes, relation_scores = \
@@ -307,29 +281,21 @@ def _compute_pred_matches(gt_triplets, pred_triplets,
     return pred_to_gt
 
 
-
-
-
-
-
 def calculate_mR_from_evaluator_list(evaluator_list, mode, multiple_preds=False, save_file=None, return_per_class=False):
     all_rel_results = {}
     for (pred_id, pred_name, evaluator_rel) in evaluator_list:
         #print('\n')
         #print('relationship: ', pred_name)
-        rel_results = evaluator_rel[mode].get_stats()
+        all_rel_results[pred_name] = evaluator_rel[mode].get_stats()
 
     mean_recall = {}
-    mR20 = 0.0
-    mR50 = 0.0
-    mR100 = 0.0
+    mR20 = mR50 = mR100 = 0.0
     for key, value in all_rel_results.items():
-        if math.isnan(value['R@100']):
+        if math_isnan(value['R@100']):
             continue
         mR20 += value['R@20']
         mR50 += value['R@50']
         mR100 += value['R@100']
-
 
     rel_num = len(evaluator_list)
     mR20 /= rel_num
@@ -340,30 +306,26 @@ def calculate_mR_from_evaluator_list(evaluator_list, mode, multiple_preds=False,
     mean_recall['R@100'] = mR100
     all_rel_results['mean_recall'] = mean_recall
 
-    if multiple_preds:
-        recall_mode = 'mean recall without constraint'
-    else:
-        recall_mode = 'mean recall with constraint'
-    print('\n')
-    print('======================' + mode + '  ' + recall_mode + '============================')
-    print('mR@20: ', mR20)
-    print('mR@50: ', mR50)
-    print('mR@100: ', mR100)
+    recall_mode = 'mean recall without constraint' if multiple_preds else 'mean recall with constraint'
+
+    print('\n', flush=True)
+    print(f'======================{mode}  {recall_mode}============================', flush=True)
+    print('mR@20: ', mR20, flush=True)
+    print('mR@50: ', mR50, flush=True)
+    print('mR@100: ', mR100, flush=True)
 
     if save_file is not None:
         if multiple_preds:
             save_file = save_file.replace('.pkl', '_multiple_preds.pkl')
         with open(save_file, 'wb') as f:
-            pickle.dump(all_rel_results, f)
+            pickle_dump(all_rel_results, f)
 
-    if return_per_class:
+    if return_per_class is True:
         per_class_recall = {key: [
             all_rel_results[pred_name][key] for (pred_id, pred_name, evaluator_rel) in evaluator_list
         ] for key in ['R@20', 'R@50', 'R@100']}
         return mean_recall, per_class_recall
-    else:
-        return mean_recall
-
+    return mean_recall
 
 
 def eval_entry(mode, gt_entry, pred_entry, evaluator, evaluator_multiple_preds, evaluator_list, evaluator_multiple_preds_list):
@@ -377,7 +339,7 @@ def eval_entry(mode, gt_entry, pred_entry, evaluator, evaluator_multiple_preds, 
         pred_entry,
     )
 
-    for (pred_id, pred_name, evaluator_rel), (_, _, evaluator_rel_mp) in zip(evaluator_list, evaluator_multiple_preds_list):
+    for (pred_id, _, evaluator_rel), (_, _, evaluator_rel_mp) in zip(evaluator_list, evaluator_multiple_preds_list):
         gt_entry_rel = gt_entry.copy()
         mask = np_in1d(gt_entry_rel['gt_relations'][:, -1], pred_id)
         gt_entry_rel['gt_relations'] = gt_entry_rel['gt_relations'][mask, :]
