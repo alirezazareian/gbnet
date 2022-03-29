@@ -48,7 +48,7 @@ class VG(Dataset):
             proposals
         """
         self.use_cache = use_cache
-        self.cachine = caching
+        self.caching = caching
         if mode not in ('test', 'train', 'val'):
             raise ValueError("Mode must be in test, train, or val. Supplied {}".format(mode))
         self.mode = mode
