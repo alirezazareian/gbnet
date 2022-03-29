@@ -1,12 +1,12 @@
 """
 Miscellaneous functions that might be useful for pytorch
 """
-
 import os
 from itertools import tee
 from h5py import File as h5py_File
 import numpy as np
 from dill import dump as pkl_dump, load as pkl_load
+from tqdm import tqdm
 from numpy import asarray as np_asarray, \
     cumsum as np_cumsum, concatenate as np_concatenate, ones as np_ones, \
     column_stack as np_column_stack, diag as np_diag, prod as np_prod, \
@@ -21,7 +21,9 @@ from torch.cuda import current_device
 from torch.nn import Module
 
 
+write = tqdm.write
 CURRENT_DEVICE = current_device()
+
 
 def optimistic_restore(network, state_dict, skip_clean=True):
     mismatch = False
@@ -475,10 +477,10 @@ def clip_grad_norm(named_parameters, max_norm, clip=False, verbose=False):
                 p.grad.data.mul_(clip_coef)
 
     if verbose:
-        print('---Total norm {:.3f} clip coef {:.3f}-----------------'.format(total_norm, clip_coef))
+        write('---Total norm {:.3f} clip coef {:.3f}-----------------'.format(total_norm, clip_coef))
         for name, norm in sorted(param_to_norm.items(), key=lambda x: -x[1]):
-            print("{:<50s}: {:.3f}, ({})".format(name, norm, param_to_shape[name]))
-        print('-------------------------------', flush=True)
+            write("{:<50s}: {:.3f}, ({})".format(name, norm, param_to_shape[name]))
+        write('-------------------------------')
 
     return total_norm
 
