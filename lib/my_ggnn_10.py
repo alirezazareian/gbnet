@@ -153,6 +153,8 @@ class GGNN(Module):
         self.sa = sa
         self.use_ontological_adjustment = config.MODEL.USE_ONTOLOGICAL_ADJUSTMENT
         self.normalize_eoa = config.MODEL.NORMALIZE_EOA
+        self.shift_eoa = config.MODEL.SHIFT_EOA
+        self.fold_eoa = config.MODEL.FOLD_EOA
 
         if self.use_ontological_adjustment is True:
             # 4x51x51 => 51x51
@@ -162,6 +164,15 @@ class GGNN(Module):
             ontological_preds[0, :] = 0.0
             ontological_preds[:, 0] = 0.0
             ontological_preds[0, 0] = 1.0
+            if self.fold_eoa is True:
+                diag_indices = np.diag_indices(ontological_preds.shape[0])
+                folded = ontological_preds + ontological_preds.T
+                folded[diag_indices] = ontological_preds[diag_indices]
+            if self.shift_eoa is True:
+                ontological_preds += 1.0
+                print(f'EOA-N: Used shift_eoa')
+            else:
+                print(f'EOA-N: Not using shift_eoa. self.eoa_n={self.normalize_eoa}')
             ontological_preds = ontological_preds / (ontological_preds.sum(-1)[:, None] + 1e-8)
             if self.normalize_eoa is True:
                 ontological_preds = adj_normalize(ontological_preds)
