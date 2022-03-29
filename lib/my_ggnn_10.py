@@ -10,7 +10,8 @@ from torch import tensor as torch_tensor, float32 as torch_float32, \
 from torch.cuda import current_device
 from torch.nn import Module, Linear, ModuleList, Sequential, ReLU
 from apex.normalization import FusedLayerNorm
-from torch.nn.functional import softmax as F_softmax, relu as F_relu
+from torch.nn.functional import softmax as F_softmax, relu as F_relu, \
+                                normalize as F_normalize
 import numpy as np
 from pickle import load as pickle_load
 from lib.my_util import MLP, adj_normalize
@@ -331,10 +332,12 @@ class GGNN(Module):
 
             if with_clean_classifier:
                 pred_cls_logits = torch_mm(self.fc_output_proj_img_pred_clean(nodes_img_pred), self.fc_output_proj_ont_pred_clean(nodes_ont_pred).t())
-                if with_transfer:
+                if with_transfer is True and self.merge_eoa_sa is True:
+                    pred_cls_logits = (F_normalize(pred_adj_nor + self.ontological_preds, p=1) @ pred_cls_logits.T).T
+                else:
                     pred_cls_logits = (pred_adj_nor @ pred_cls_logits.T).T
 
-            if self.use_ontological_adjustment is True:
+            if self.use_ontological_adjustment is True and not self.merge_eoa_sa:
                 pred_cls_logits = (self.ontological_preds @ pred_cls_logits.T).T
 
             edges_img2ont_pred = F_softmax(pred_cls_logits, dim=1)
