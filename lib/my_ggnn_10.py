@@ -158,7 +158,7 @@ class GGNN(Module):
             # 4x51x51 => 51x51
             print('my_ggnn_10: using use_ontological_adjustment')
             # ontological_preds = torch_tensor(self.adjmtx_pred2pred, dtype=torch_float32, device=CUDA_DEVICE).sum(axis=0)
-            ontological_preds = self.adjmtx_pred2pred.sum(axis=0)
+            ontological_preds = self.adjmtx_pred2pred[:3, :, :].sum(axis=0)
             ontological_preds[0, :] = 0.0
             ontological_preds[:, 0] = 0.0
             ontological_preds[0, 0] = 1.0
