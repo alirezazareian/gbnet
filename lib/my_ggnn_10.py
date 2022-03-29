@@ -156,6 +156,7 @@ class GGNN(Module):
         self.normalize_eoa = config.MODEL.NORMALIZE_EOA
         self.shift_eoa = config.MODEL.SHIFT_EOA
         self.fold_eoa = config.MODEL.FOLD_EOA
+        self.merge_eoa_sa = config.MODEL.MERGE_EOA_SA
 
         if self.use_ontological_adjustment is True:
             # 4x51x51 => 51x51
