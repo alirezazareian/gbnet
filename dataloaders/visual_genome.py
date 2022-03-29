@@ -6,7 +6,6 @@ import os
 from os import environ as os_environ
 from collections import defaultdict
 from h5py import File as h5py_File
-import numpy as np
 from os.path import join as os_path_join, exists as os_path_exists
 from json import load as json_load
 from numpy import array as np_array, where as np_where, \
@@ -15,6 +14,7 @@ from numpy import array as np_array, where as np_where, \
 from numpy.random import random as np_random_random, choice as np_random_choice
 from PIL.Image import open as Image_open, FLIP_LEFT_RIGHT as Image_FLIP_LEFT_RIGHT
 from torch.utils.data import Dataset, DataLoader
+from torch import save as torch_save, load as torch_load
 from torchvision.transforms import Resize, Compose, ToTensor, Normalize
 from pycocotools.coco import COCO
 from dataloaders.blob import Blob
@@ -31,7 +31,7 @@ class VG(Dataset):
     def __init__(self, mode, roidb_file=VG_SGG_FN, dict_file=VG_SGG_DICT_FN,
                  image_file=IM_DATA_FN, filter_empty_rels=True, num_im=-1, num_val_im=5000,
                  filter_duplicate_rels=True, filter_non_overlap=True,
-                 use_proposals=False, with_clean_classifier=None, get_state=None):
+                 use_proposals=False, with_clean_classifier=None, get_state=None, caching=False, use_cache=False):
         """
         Torch dataset for VisualGenome
         :param mode: Must be train, test, or val
@@ -47,6 +47,8 @@ class VG(Dataset):
         :param proposal_file: If None, we don't provide proposals. Otherwise file for where we get RPN
             proposals
         """
+        self.use_cache = use_cache
+        self.cachine = caching
         if mode not in ('test', 'train', 'val'):
             raise ValueError("Mode must be in test, train, or val. Supplied {}".format(mode))
         self.mode = mode
@@ -149,25 +151,31 @@ class VG(Dataset):
         return train, val, test
 
     def __getitem__(self, index):
-        image_unpadded = Image_open(self.filenames[index]).convert('RGB')
+        fname = self.filenames[index]
+        cache_path = os_path_join(f'cached_{self.mode}', f'{fname}.pt')
+        if self.caching is True and (self.use_cache is True or os_path_exists(cache_path)):
+            return torch_load(cache_path)
+
+        image_unpadded = Image_open(fname).convert('RGB')
 
         # Optionally flip the image if we're doing training
         flipped = self.is_train and np_random_random() > 0.5
         gt_boxes = self.gt_boxes[index].copy()
 
+        w, h = image_unpadded.size
+        max_side = max(w, h)
+        box_scale_factor = BOX_SCALE / max_side
         # Boxes are already at BOX_SCALE
         if self.is_train:
+
             # crop boxes that are too large. This seems to be only a problem for image heights, but whatevs
             gt_boxes[:, [1, 3]] = gt_boxes[:, [1, 3]].clip(
-                None, BOX_SCALE / max(image_unpadded.size) * image_unpadded.size[1])
+                None, box_scale_factor * h)
             gt_boxes[:, [0, 2]] = gt_boxes[:, [0, 2]].clip(
-                None, BOX_SCALE / max(image_unpadded.size) * image_unpadded.size[0])
+                None, box_scale_factor * w)
 
             # # crop the image for data augmentation
             # image_unpadded, gt_boxes = random_crop(image_unpadded, gt_boxes, BOX_SCALE, round_boxes=True)
-
-        w, h = image_unpadded.size
-        box_scale_factor = BOX_SCALE / max(w, h)
 
         if flipped:
             scaled_w = int(box_scale_factor * float(w))
@@ -176,7 +184,7 @@ class VG(Dataset):
             gt_boxes[:, [0, 2]] = scaled_w - gt_boxes[:, [2, 0]]
 
         if PRINTING: print(f'visual_genome: before: (w, h) = {(w, h)}')
-        img_scale_factor = IM_SCALE / max(w, h)
+        img_scale_factor = IM_SCALE / max_side
         if h > w:
             im_size = (IM_SCALE, int(w * img_scale_factor), img_scale_factor)
         elif h < w:
@@ -205,14 +213,19 @@ class VG(Dataset):
             'scale': IM_SCALE / BOX_SCALE,  # Multiply the boxes by this.
             'index': index,
             'flipped': flipped,
-            'fn': self.filenames[index],
+            'fn': fname,
         }
 
         if self.rpn_rois is not None:
             entry['proposals'] = self.rpn_rois[index]
 
         assertion_checks(entry)
+        if self.caching is True: torch_save(entry, cache_path)
+        # self.cached_data.append(entry)
         return entry
+
+    def set_use_cache(self, use_cache):
+        self.use_cache = use_cache
 
     def __len__(self):
         return len(self.filenames)
