@@ -8,8 +8,7 @@ from torch import tensor as torch_tensor, float32 as torch_float32, \
     sigmoid as torch_sigmoid, tanh as torch_tanh, cat as torch_cat, \
     sum as torch_sum, abs as torch_abs, no_grad as torch_no_grad
 from torch.cuda import current_device
-from torch.nn import Module, Linear, ModuleList, Sequential, ReLU
-from apex.normalization import FusedLayerNorm
+from torch.nn import Module, Linear, ModuleList, Sequential, ReLU, LayerNorm
 from torch.nn.functional import softmax as F_softmax, relu as F_relu, \
                                 normalize as F_normalize
 import numpy as np
@@ -55,7 +54,7 @@ class GGNN(Module):
                 self.dimension_reduce.append(Sequential(Linear(2*self.k + self.hidden_channels, self.hidden_channels, device=CUDA_DEVICE)))
             self.dimension_reduce[-1] = Sequential(Linear(2*self.k + self.hidden_channels, self.out_channels, device=CUDA_DEVICE))
             # self.gn = ModuleList([GroupNorm(self.num_groups, self.hidden_channels) for _ in range(self.time_step_num-1)])
-            self.gn = ModuleList([FusedLayerNorm(self.hidden_channels) for _ in range(self.time_step_num-1)])
+            self.gn = ModuleList([LayerNorm(self.hidden_channels) for _ in range(self.time_step_num-1)])
 
         if use_embedding:
             with open(emb_path, 'rb') as fin:
@@ -175,13 +174,13 @@ class GGNN(Module):
                 print(f'EOA-N: Used shift_eoa')
             else:
                 print(f'EOA-N: Not using shift_eoa. self.eoa_n={self.normalize_eoa}')
-            ontological_preds = ontological_preds / (ontological_preds.sum(-1)[:, None] + 1e-8)
-            if self.normalize_eoa is True:
-                ontological_preds = adj_normalize(ontological_preds)
-                print(f'EOA-N: Used adj_normalize')
-            else:
-                print(f'EOA-N: Not using adj_normalize. self.eoa_n={self.normalize_eoa}')
+            if not self.normalize_eoa:
+                ontological_preds = ontological_preds / (ontological_preds.sum(-1)[:, None] + 1e-8)
+                print(f'EOA-N: Not using normalize_eoa. Using BPL\'s original normalization')
             self.ontological_preds = torch_tensor(ontological_preds, dtype=torch_float32, device=CUDA_DEVICE)
+            if self.normalize_eoa is True:
+                F_normalize(self.ontological_preds, out=self.ontological_preds)
+                print(f'EOA-N: Used normalize_eoa')
         else:
             print(f'my_ggnn_10: not using use_ontological_adjustment. self.use_ontological_adjustment={self.use_ontological_adjustment}')
 
