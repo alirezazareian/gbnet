@@ -158,13 +158,8 @@ class GGNN(Module):
         self.merge_eoa_sa = config.MODEL.MERGE_EOA_SA
 
         if self.use_ontological_adjustment is True:
-            # 4x51x51 => 51x51
             print('my_ggnn_10: using use_ontological_adjustment')
-            # ontological_preds = torch_tensor(self.adjmtx_pred2pred, dtype=torch_float32, device=CUDA_DEVICE).sum(axis=0)
-            ontological_preds = self.adjmtx_pred2pred[:3, :, :].sum(axis=0)
-            ontological_preds[0, :] = 0.0
-            ontological_preds[:, 0] = 0.0
-            ontological_preds[0, 0] = 1.0
+            ontological_preds = self.adjmtx_pred2pred[3, :, :]
             if self.fold_eoa is True:
                 diag_indices = np.diag_indices(ontological_preds.shape[0])
                 folded = ontological_preds + ontological_preds.T
