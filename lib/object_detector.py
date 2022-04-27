@@ -1,3 +1,4 @@
+from os import environ as os_environ
 import numpy as np
 import torch
 import torch.nn as nn
@@ -69,6 +70,8 @@ class ObjectDetector(nn.Module):
 
         self.classes = classes
         self.num_gpus = num_gpus
+        self.devices = [int(x) for x in os_environ['CUDA_VISIBLE_DEVICES'].split(',')]
+        assert self.num_gpus == len(self.devices)
         self.pooling_size = 7
         self.nms_filter_duplicates = nms_filter_duplicates
         self.max_per_img = max_per_img
@@ -423,10 +426,7 @@ class ObjectDetector(nn.Module):
         if self.num_gpus == 1:
             return self(*batch[0])
 
-        devices = [int(x) for x in os_environ['CUDA_VISIBLE_DEVICES'].split(',')]
-        assert self.num_gpus == len(devices)
-
-        replicas = replicate(self, devices=devices)
+        replicas = replicate(self, devices=self.devices)
         outputs = parallel_apply(replicas, [batch[i] for i in range(self.num_gpus)])
 
         if any([x.is_none() for x in outputs]):
