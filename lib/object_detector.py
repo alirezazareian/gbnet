@@ -1,9 +1,10 @@
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.parallel
 from torch.autograd import Variable
 from torch.nn import functional as F
+from torch.nn.parallel import replicate, parallel_apply
+from torch.nn.parallel._functions import Gather
 
 from config import ANCHOR_SIZE, ANCHOR_RATIOS, ANCHOR_SCALES
 from lib.fpn.generate_anchors import generate_anchors
@@ -16,7 +17,6 @@ from torchvision.ops import roi_align
 from lib.pytorch_misc import enumerate_by_image, gather_nd, diagonal_inds, Flattener
 from torchvision.models.vgg import vgg16
 from torchvision.models.resnet import resnet101
-from torch.nn.parallel._functions import Gather
 
 
 class Result(object):
