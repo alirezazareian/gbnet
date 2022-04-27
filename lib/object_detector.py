@@ -423,8 +423,11 @@ class ObjectDetector(nn.Module):
         if self.num_gpus == 1:
             return self(*batch[0])
 
-        replicas = nn.parallel.replicate(self, devices=list(range(self.num_gpus)))
-        outputs = nn.parallel.parallel_apply(replicas, [batch[i] for i in range(self.num_gpus)])
+        devices = [int(x) for x in os_environ['CUDA_VISIBLE_DEVICES'].split(',')]
+        assert self.num_gpus == len(devices)
+
+        replicas = replicate(self, devices=devices)
+        outputs = parallel_apply(replicas, [batch[i] for i in range(self.num_gpus)])
 
         if any([x.is_none() for x in outputs]):
             assert not self.training
