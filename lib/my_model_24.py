@@ -1,9 +1,11 @@
+from os import environ as os_environ
 import sys
 import pickle
 import numpy as np
 from torch import tensor as torch_tensor, float32 as torch_float32, zeros as torch_zeros, cat as torch_cat
 from torch.cuda import current_device
-from torch.nn import Linear, Sequential, Module, AvgPool2d, parallel
+from torch.nn import Linear, Sequential, Module, AvgPool2d
+from torch.nn.paralle import replicate, parallel_apply
 from torch.nn.functional import cross_entropy as F_cross_entropy, softmax as F_softmax
 from torch.nn.utils.rnn import PackedSequence
 from torchvision.ops import nms, roi_align
@@ -129,6 +131,8 @@ class KERN(Module):
         self.classes = classes
         self.rel_classes = rel_classes
         self.num_gpus = num_gpus
+        self.devices = [int(x) for x in os_environ['CUDA_VISIBLE_DEVICES'].split(',')]
+        assert self.num_gpus == len(self.devices)
         assert mode in MODES
         self.mode = mode
         self.pooling_size = 7
@@ -338,11 +342,9 @@ class KERN(Module):
         batch.scatter()
         if self.num_gpus == 1:
             return self(*batch[0])
-        devices = [int(x) for x in os_environ['CUDA_VISIBLE_DEVICES'].split(',')]
 
-        assert self.num_gpus == len(devices)
-        replicas = parallel.replicate(self, devices=devices)
-        outputs = parallel.parallel_apply(replicas, [batch[i] for i in devices])
+        replicas = replicate(self, devices=self.devices)
+        outputs = parallel_apply(replicas, [batch[i] for i in range(self.num_gpus)])
         if self.training:
             return gather_res(outputs, 0, dim=0)
         return outputs
