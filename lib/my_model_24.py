@@ -338,8 +338,11 @@ class KERN(Module):
         batch.scatter()
         if self.num_gpus == 1:
             return self(*batch[0])
-        replicas = parallel.replicate(self, devices=list(range(self.num_gpus)))
-        outputs = parallel.parallel_apply(replicas, [batch[i] for i in range(self.num_gpus)])
+        devices = [int(x) for x in os_environ['CUDA_VISIBLE_DEVICES'].split(',')]
+
+        assert self.num_gpus == len(devices)
+        replicas = parallel.replicate(self, devices=devices)
+        outputs = parallel.parallel_apply(replicas, [batch[i] for i in devices])
         if self.training:
             return gather_res(outputs, 0, dim=0)
         return outputs
