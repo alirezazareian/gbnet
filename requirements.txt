@@ -2,7 +2,7 @@ attrs==19.3.0
 awscli==1.15.84
 backcall==0.1.0
 bleach==3.1.0
-certifi==2019.9.11
+certifi==2022.12.7
 cffi==1.13.1
 cycler==0.10.0
 Cython==0.29.13
