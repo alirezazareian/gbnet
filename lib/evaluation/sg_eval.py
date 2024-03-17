@@ -1,14 +1,19 @@
 """
 Adapted from Danfei Xu. In particular, slow code was removed
 """
-import numpy as np
-import math
-import pickle
+from math import isnan as math_isnan
 from functools import reduce
+from pickle import dump as pickle_dump
+from numpy import mean as np_mean, column_stack as np_column_stack, \
+                  ones as np_ones, zeros as np_zeros, union1d as np_union1d, \
+                  all as np_all, where as np_where, \
+                  in1d as np_in1d, concatenate as np_concatenate, \
+                  save as np_save, set_printoptions as np_set_printoptions
 from lib.pytorch_misc import intersect_2d, argsort_desc
 from lib.fpn.box_intersections_cpu.bbox import bbox_overlaps
 from config import MODES
-np.set_printoptions(precision=3)
+np_set_printoptions(precision=3)
+
 
 class BasicSceneGraphEvaluator:
     def __init__(self, mode, multiple_preds=False):
@@ -34,7 +39,7 @@ class BasicSceneGraphEvaluator:
         return res
 
     def save(self, fn):
-        np.save(fn, self.result_dict)
+        np_save(fn, self.result_dict)
 
     def print_stats(self):
         if self.multiple_preds:
@@ -42,22 +47,19 @@ class BasicSceneGraphEvaluator:
         else:
             recall_method = 'recall with constraint'
         output = {}
-        print('======================' + self.mode + '  ' + recall_method + '============================')
+        print(f'======================{self.mode}  {recall_method}============================', flush=True)
         for k, v in self.result_dict[self.mode + '_recall'].items():
-            print('R@%i: %f' % (k, np.mean(v)))
-            output['R@%i' % k] = np.mean(v)
+            print('R@%i: %f' % (k, np_mean(v)), flush=True)
+            output['R@%i' % k] = np_mean(v)
         return output
 
     def get_stats(self):
-        if self.multiple_preds:
-            recall_method = 'recall without constraint'
-        else:
-            recall_method = 'recall with constraint'
+        recall_method = 'recall without constraint' if self.multiple_preds else 'recall with constraint'
         output = {}
         for k, v in self.result_dict[self.mode + '_recall'].items():
-            output['R@%i' % k] = np.mean(v)
+            output['R@%i' % k] = np_mean(v)
         return output
-    
+
 
 def evaluate_from_dict(gt_entry, pred_entry, mode, result_dict, multiple_preds=False,
                        viz_dict=None, **kwargs):
@@ -66,10 +68,10 @@ def evaluate_from_dict(gt_entry, pred_entry, mode, result_dict, multiple_preds=F
     :param gt_entry: Dictionary containing gt_relations, gt_boxes, gt_classes
     :param pred_entry: Dictionary containing pred_rels, pred_boxes (if detection), pred_classes
     :param mode: 'det' or 'cls'
-    :param result_dict: 
-    :param viz_dict: 
-    :param kwargs: 
-    :return: 
+    :param result_dict:
+    :param viz_dict:
+    :param kwargs:
+    :return:
     """
     gt_rels = gt_entry['gt_relations']
     gt_boxes = gt_entry['gt_boxes'].astype(float)
@@ -81,7 +83,7 @@ def evaluate_from_dict(gt_entry, pred_entry, mode, result_dict, multiple_preds=F
     if mode == 'predcls':
         pred_boxes = gt_boxes
         pred_classes = gt_classes
-        obj_scores = np.ones(gt_classes.shape[0])
+        obj_scores = np_ones(gt_classes.shape[0])
     elif mode == 'sgcls':
         pred_boxes = gt_boxes
         pred_classes = pred_entry['pred_classes']
@@ -104,7 +106,7 @@ def evaluate_from_dict(gt_entry, pred_entry, mode, result_dict, multiple_preds=F
         # Now sort the matching ones
         rel_scores_sorted = argsort_desc(rel_scores[:,1:])
         rel_scores_sorted[:,1] += 1
-        rel_scores_sorted = np.column_stack((pred_rel_inds[rel_scores_sorted[:,0]], rel_scores_sorted[:,1]))
+        rel_scores_sorted = np_column_stack((pred_rel_inds[rel_scores_sorted[:,0]], rel_scores_sorted[:,1]))
 
         matches = intersect_2d(rel_scores_sorted, gt_rels)
         for k in result_dict[mode + '_recall']:
@@ -118,10 +120,10 @@ def evaluate_from_dict(gt_entry, pred_entry, mode, result_dict, multiple_preds=F
         obj_scores_per_rel = obj_scores[pred_rel_inds].prod(1)
         overall_scores = obj_scores_per_rel[:,None] * rel_scores[:,1:]
         score_inds = argsort_desc(overall_scores)[:100]
-        pred_rels = np.column_stack((pred_rel_inds[score_inds[:,0]], score_inds[:,1]+1))
+        pred_rels = np_column_stack((pred_rel_inds[score_inds[:,0]], score_inds[:,1]+1))
         predicate_scores = rel_scores[score_inds[:,0], score_inds[:,1]+1]
     else:
-        pred_rels = np.column_stack((pred_rel_inds, 1+rel_scores[:,1:].argmax(1)))
+        pred_rels = np_column_stack((pred_rel_inds, 1+rel_scores[:,1:].argmax(1)))
         predicate_scores = rel_scores[:,1:].max(1)
 
     pred_to_gt, pred_5ples, rel_scores = evaluate_recall(
@@ -132,37 +134,13 @@ def evaluate_from_dict(gt_entry, pred_entry, mode, result_dict, multiple_preds=F
 
     for k in result_dict[mode + '_recall']:
 
-        match = reduce(np.union1d, pred_to_gt[:k])
+        match = reduce(np_union1d, pred_to_gt[:k])
 
         rec_i = float(len(match)) / float(gt_rels.shape[0])
         result_dict[mode + '_recall'][k].append(rec_i)
     return pred_to_gt, pred_5ples, rel_scores
 
-    # print(" ".join(["R@{:2d}: {:.3f}".format(k, v[-1]) for k, v in result_dict[mode + '_recall'].items()]))
-    # Deal with visualization later
-    # # Optionally, log things to a separate dictionary
-    # if viz_dict is not None:
-    #     # Caution: pred scores has changed (we took off the 0 class)
-    #     gt_rels_scores = pred_scores[
-    #         gt_rels[:, 0],
-    #         gt_rels[:, 1],
-    #         gt_rels[:, 2] - 1,
-    #     ]
-    #     # gt_rels_scores_cls = gt_rels_scores * pred_class_scores[
-    #     #         gt_rels[:, 0]] * pred_class_scores[gt_rels[:, 1]]
-    #
-    #     viz_dict[mode + '_pred_rels'] = pred_5ples.tolist()
-    #     viz_dict[mode + '_pred_rels_scores'] = max_pred_scores.tolist()
-    #     viz_dict[mode + '_pred_rels_scores_cls'] = max_rel_scores.tolist()
-    #     viz_dict[mode + '_gt_rels_scores'] = gt_rels_scores.tolist()
-    #     viz_dict[mode + '_gt_rels_scores_cls'] = gt_rels_scores_cls.tolist()
-    #
-    #     # Serialize pred2gt matching as a list of lists, where each sublist is of the form
-    #     # pred_ind, gt_ind1, gt_ind2, ....
-    #     viz_dict[mode + '_pred2gt_rel'] = pred_to_gt
 
-
-###########################
 def evaluate_recall(gt_rels, gt_boxes, gt_classes,
                     pred_rels, pred_boxes, pred_classes, rel_scores=None, cls_scores=None,
                     iou_thresh=0.5, phrdet=False):
@@ -181,7 +159,7 @@ def evaluate_recall(gt_rels, gt_boxes, gt_classes,
              rel_scores: [cls_0score, cls1_score, relscore]
                    """
     if pred_rels.size == 0:
-        return [[]], np.zeros((0,5)), np.zeros(0)
+        return [[]], np_zeros((0,5)), np_zeros(0)
 
     num_gt_boxes = gt_boxes.shape[0]
     num_gt_relations = gt_rels.shape[0]
@@ -195,15 +173,15 @@ def evaluate_recall(gt_rels, gt_boxes, gt_classes,
     assert pred_rels[:,:2].max() < pred_classes.shape[0]
 
     # Exclude self rels
-    # assert np.all(pred_rels[:,0] != pred_rels[:,1])
-    assert np.all(pred_rels[:,2] > 0)
+    # assert np_all(pred_rels[:,0] != pred_rels[:,1])
+    assert np_all(pred_rels[:,2] > 0)
 
     pred_triplets, pred_triplet_boxes, relation_scores = \
         _triplet(pred_rels[:,2], pred_rels[:,:2], pred_classes, pred_boxes,
                  rel_scores, cls_scores)
 
     scores_overall = relation_scores.prod(1)
-    if not np.all(scores_overall[1:] <= scores_overall[:-1] + 1e-5):
+    if not np_all(scores_overall[1:] <= scores_overall[:-1] + 1e-5):
         print("Somehow the relations weren't sorted properly: \n{}".format(scores_overall))
         # raise ValueError("Somehow the relations werent sorted properly")
 
@@ -218,7 +196,7 @@ def evaluate_recall(gt_rels, gt_boxes, gt_classes,
     )
 
     # Contains some extra stuff for visualization. Not needed.
-    pred_5ples = np.column_stack((
+    pred_5ples = np_column_stack((
         pred_rels[:,:2],
         pred_triplets[:, [0, 2, 1]],
     ))
@@ -245,12 +223,12 @@ def _triplet(predicates, relations, classes, boxes,
     assert (predicates.shape[0] == relations.shape[0])
 
     sub_ob_classes = classes[relations[:, :2]]
-    triplets = np.column_stack((sub_ob_classes[:, 0], predicates, sub_ob_classes[:, 1]))
-    triplet_boxes = np.column_stack((boxes[relations[:, 0]], boxes[relations[:, 1]]))
+    triplets = np_column_stack((sub_ob_classes[:, 0], predicates, sub_ob_classes[:, 1]))
+    triplet_boxes = np_column_stack((boxes[relations[:, 0]], boxes[relations[:, 1]]))
 
     triplet_scores = None
     if predicate_scores is not None and class_scores is not None:
-        triplet_scores = np.column_stack((
+        triplet_scores = np_column_stack((
             class_scores[relations[:, 0]],
             class_scores[relations[:, 1]],
             predicate_scores,
@@ -264,12 +242,12 @@ def _compute_pred_matches(gt_triplets, pred_triplets,
     """
     Given a set of predicted triplets, return the list of matching GT's for each of the
     given predictions
-    :param gt_triplets: 
-    :param pred_triplets: 
-    :param gt_boxes: 
-    :param pred_boxes: 
-    :param iou_thresh: 
-    :return: 
+    :param gt_triplets:
+    :param pred_triplets:
+    :param gt_boxes:
+    :param pred_boxes:
+    :param iou_thresh:
+    :return:
     """
     # This performs a matrix multiplication-esque thing between the two arrays
     # Instead of summing, we want the equality, so we reduce in that way
@@ -277,7 +255,7 @@ def _compute_pred_matches(gt_triplets, pred_triplets,
     keeps = intersect_2d(gt_triplets, pred_triplets)
     gt_has_match = keeps.any(1)
     pred_to_gt = [[] for x in range(pred_boxes.shape[0])]
-    for gt_ind, gt_box, keep_inds in zip(np.where(gt_has_match)[0],
+    for gt_ind, gt_box, keep_inds in zip(np_where(gt_has_match)[0],
                                          gt_boxes[gt_has_match],
                                          keeps[gt_has_match],
                                          ):
@@ -285,10 +263,10 @@ def _compute_pred_matches(gt_triplets, pred_triplets,
         if phrdet:
             # Evaluate where the union box > 0.5
             gt_box_union = gt_box.reshape((2, 4))
-            gt_box_union = np.concatenate((gt_box_union.min(0)[:2], gt_box_union.max(0)[2:]), 0)
+            gt_box_union = np_concatenate((gt_box_union.min(0)[:2], gt_box_union.max(0)[2:]), 0)
 
             box_union = boxes.reshape((-1, 2, 4))
-            box_union = np.concatenate((box_union.min(1)[:,:2], box_union.max(1)[:,2:]), 1)
+            box_union = np_concatenate((box_union.min(1)[:,:2], box_union.max(1)[:,2:]), 1)
 
             inds = bbox_overlaps(gt_box_union[None], box_union)[0] >= iou_thresh
 
@@ -298,14 +276,9 @@ def _compute_pred_matches(gt_triplets, pred_triplets,
 
             inds = (sub_iou >= iou_thresh) & (obj_iou >= iou_thresh)
 
-        for i in np.where(keep_inds)[0][inds]:
+        for i in np_where(keep_inds)[0][inds]:
             pred_to_gt[i].append(int(gt_ind))
     return pred_to_gt
-
-
-
-
-
 
 
 def calculate_mR_from_evaluator_list(evaluator_list, mode, multiple_preds=False, save_file=None, return_per_class=False):
@@ -313,21 +286,17 @@ def calculate_mR_from_evaluator_list(evaluator_list, mode, multiple_preds=False,
     for (pred_id, pred_name, evaluator_rel) in evaluator_list:
         #print('\n')
         #print('relationship: ', pred_name)
-        rel_results = evaluator_rel[mode].get_stats()
-        all_rel_results[pred_name] = rel_results
+        all_rel_results[pred_name] = evaluator_rel[mode].get_stats()
 
     mean_recall = {}
-    mR20 = 0.0
-    mR50 = 0.0
-    mR100 = 0.0
-    for key, value in all_rel_results.items():        
-        if math.isnan(value['R@100']):
+    mR20 = mR50 = mR100 = 0.0
+    for key, value in all_rel_results.items():
+        if math_isnan(value['R@100']):
             continue
         mR20 += value['R@20']
         mR50 += value['R@50']
         mR100 += value['R@100']
-        
-        
+
     rel_num = len(evaluator_list)
     mR20 /= rel_num
     mR50 /= rel_num
@@ -337,30 +306,26 @@ def calculate_mR_from_evaluator_list(evaluator_list, mode, multiple_preds=False,
     mean_recall['R@100'] = mR100
     all_rel_results['mean_recall'] = mean_recall
 
-    if multiple_preds:
-        recall_mode = 'mean recall without constraint'
-    else:
-        recall_mode = 'mean recall with constraint'
-    print('\n')
-    print('======================' + mode + '  ' + recall_mode + '============================')
-    print('mR@20: ', mR20)
-    print('mR@50: ', mR50)
-    print('mR@100: ', mR100)
+    recall_mode = 'mean recall without constraint' if multiple_preds else 'mean recall with constraint'
+
+    print('\n', flush=True)
+    print(f'======================{mode}  {recall_mode}============================', flush=True)
+    print('mR@20: ', mR20, flush=True)
+    print('mR@50: ', mR50, flush=True)
+    print('mR@100: ', mR100, flush=True)
 
     if save_file is not None:
         if multiple_preds:
             save_file = save_file.replace('.pkl', '_multiple_preds.pkl')
         with open(save_file, 'wb') as f:
-            pickle.dump(all_rel_results, f)    
-            
-    if return_per_class:
+            pickle_dump(all_rel_results, f)
+
+    if return_per_class is True:
         per_class_recall = {key: [
             all_rel_results[pred_name][key] for (pred_id, pred_name, evaluator_rel) in evaluator_list
         ] for key in ['R@20', 'R@50', 'R@100']}
         return mean_recall, per_class_recall
-    else:
-        return mean_recall
-
+    return mean_recall
 
 
 def eval_entry(mode, gt_entry, pred_entry, evaluator, evaluator_multiple_preds, evaluator_list, evaluator_multiple_preds_list):
@@ -376,11 +341,11 @@ def eval_entry(mode, gt_entry, pred_entry, evaluator, evaluator_multiple_preds, 
 
     for (pred_id, _, evaluator_rel), (_, _, evaluator_rel_mp) in zip(evaluator_list, evaluator_multiple_preds_list):
         gt_entry_rel = gt_entry.copy()
-        mask = np.in1d(gt_entry_rel['gt_relations'][:, -1], pred_id)
+        mask = np_in1d(gt_entry_rel['gt_relations'][:, -1], pred_id)
         gt_entry_rel['gt_relations'] = gt_entry_rel['gt_relations'][mask, :]
         if gt_entry_rel['gt_relations'].shape[0] == 0:
             continue
-        
+
         evaluator_rel[mode].evaluate_scene_graph_entry(
                 gt_entry_rel,
                 pred_entry,

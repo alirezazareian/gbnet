@@ -117,7 +117,7 @@ class Blob(object):
         for i in range(self.num_gpus):
             for j in range(self.batch_size_per_gpu):
                 chunk_sizes[i] += datom[i * self.batch_size_per_gpu + j].shape[0]
-        return Variable(tensor(np.concatenate(datom, 0)), volatile=self.volatile), chunk_sizes
+        return tensor(np.concatenate(datom, 0)).requires_grad_(not self.volatile and tensor is not torch.LongTensor), chunk_sizes
 
     def reduce(self):
         """ Merges all the detections into flat lists + numbers of how many are in each"""
@@ -126,7 +126,7 @@ class Blob(object):
                 len(self.imgs), self.batch_size_per_gpu, self.num_gpus
             ))
 
-        self.imgs = Variable(torch.stack(self.imgs, 0), volatile=self.volatile)
+        self.imgs = torch.stack(self.imgs, 0).requires_grad_(not self.volatile)
         self.im_sizes = np.stack(self.im_sizes).reshape(
             (self.num_gpus, self.batch_size_per_gpu, 3))
 
@@ -148,7 +148,7 @@ class Blob(object):
     def _scatter(self, x, chunk_sizes, dim=0):
         """ Helper function"""
         if self.num_gpus == 1:
-            return x.cuda(self.primary_gpu, async=True)
+            return x.cuda(self.primary_gpu, non_blocking=True)
         return torch.nn.parallel.scatter_gather.Scatter.apply(
             list(range(self.num_gpus)), chunk_sizes, dim, x)
 
@@ -156,8 +156,8 @@ class Blob(object):
         """ Assigns everything to the GPUs"""
         self.imgs = self._scatter(self.imgs, [self.batch_size_per_gpu] * self.num_gpus)
 
-        self.gt_classes_primary = self.gt_classes.cuda(self.primary_gpu, async=True)
-        self.gt_boxes_primary = self.gt_boxes.cuda(self.primary_gpu, async=True)
+        self.gt_classes_primary = self.gt_classes.cuda(self.primary_gpu, non_blocking=True)
+        self.gt_boxes_primary = self.gt_boxes.cuda(self.primary_gpu, non_blocking=True)
 
         # Predcls might need these
         self.gt_classes = self._scatter(self.gt_classes, self.gt_box_chunks)
@@ -167,14 +167,14 @@ class Blob(object):
 
             self.train_anchor_inds = self._scatter(self.train_anchor_inds,
                                                    self.train_chunks)
-            self.train_anchor_labels = self.train_anchor_labels.cuda(self.primary_gpu, async=True)
-            self.train_anchors = self.train_anchors.cuda(self.primary_gpu, async=True)
+            self.train_anchor_labels = self.train_anchor_labels.cuda(self.primary_gpu, non_blocking=True)
+            self.train_anchors = self.train_anchors.cuda(self.primary_gpu, non_blocking=True)
 
             if self.is_rel:
                 self.gt_rels = self._scatter(self.gt_rels, self.gt_rel_chunks)
         else:
             if self.is_rel:
-                self.gt_rels = self.gt_rels.cuda(self.primary_gpu, async=True)
+                self.gt_rels = self.gt_rels.cuda(self.primary_gpu, non_blocking=True)
 
         if self.proposal_chunks is not None:
             self.proposals = self._scatter(self.proposals, self.proposal_chunks)
@@ -184,7 +184,7 @@ class Blob(object):
         Returns a tuple containing data
         :param index: Which GPU we're on, or 0 if no GPUs
         :return: If training:
-        (image, im_size, img_start_ind, anchor_inds, anchors, gt_boxes, gt_classes, 
+        (image, im_size, img_start_ind, anchor_inds, anchors, gt_boxes, gt_classes,
         train_anchor_inds)
         test:
         (image, im_size, img_start_ind, anchor_inds, anchors)
@@ -227,4 +227,3 @@ class Blob(object):
             self.gt_boxes[index], self.gt_classes[index], rels_i, None, self.train_anchor_inds[index])
         return (self.imgs[index], self.im_sizes[index], image_offset,
                 self.gt_boxes[index], self.gt_classes[index], rels_i, None)
-

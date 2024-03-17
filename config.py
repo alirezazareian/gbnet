@@ -4,25 +4,28 @@ Configuration file!
 import os
 from argparse import ArgumentParser
 import numpy as np
+from munch import Munch
 
-ROOT_PATH = '/path/to/GBNet-Supp'
+
+ROOT_PATH = os.path.join('/', 'home', 'zhanwen', 'gbnet')
+
 
 def path(fn):
     return os.path.join(ROOT_PATH, fn)
 
-def stanford_path(fn):
-    return os.path.join('/path/to/stanford/preprocessed/metadata', fn)
+
+def stanford_metadata_path(fn):
+    return os.path.join(ROOT_PATH, 'vgmeta', fn) # '/path/to/stanford/preprocessed/metadata'
 
 # =============================================================================
 # Update these with where your data is stored ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-VG_IMAGES = '/path/to/visual/genome/images'
-RCNN_CHECKPOINT_FN = path('checkpoints/vgdet/vg-24.tar')
+VG_IMAGES = os.path.join(ROOT_PATH, 'vgimg') # '/path/to/visual/genome/images'
 
-IM_DATA_FN = stanford_path('image_data.json')
-VG_SGG_FN = stanford_path('VG-SGG.h5')
-VG_SGG_DICT_FN = stanford_path('VG-SGG-dicts.json')
-PROPOSAL_FN = stanford_path('proposals.h5')
+IM_DATA_FN = stanford_metadata_path('image_data.json')
+VG_SGG_FN = stanford_metadata_path('VG-SGG.h5')
+VG_SGG_DICT_FN = stanford_metadata_path('VG-SGG-dicts.json')
+PROPOSAL_FN = stanford_metadata_path('proposals.h5')
 
 # =============================================================================
 # =============================================================================
@@ -101,6 +104,26 @@ class ModelConfig(object):
         self.tb_log_dir = None
         self.save_rel_recall = None
 
+        self.MODEL = Munch()
+        self.MODEL.DEVICE = None
+        self.MODEL.CONF_MAT_FREQ_TRAIN = None
+
+        self.MODEL.ROI_RELATION_HEAD = Munch()
+        self.MODEL.ROI_RELATION_HEAD.BPL_HIDDEN_DIM = None
+        self.MODEL.ROI_RELATION_HEAD.BPL_POOLING_DIM = None
+        self.MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER = None
+        self.MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER = None
+
+        self.MODEL.LRGA = Munch()
+        self.MODEL.LRGA.USE_LRGA = None
+        self.MODEL.LRGA.K = None
+        self.MODEL.LRGA.DROPOUT = None
+        self.MODEL.LRGA.IN_CHANNELS = None
+        self.MODEL.LRGA.HIDDEN_CHANNELS = None
+
+        self.MODEL.GN = Munch()
+        self.MODEL.GN.NUM_GROUPS = None
+
         self.parser = self.setup_parser()
         if args_str is None:
             self.args = vars(self.parser.parse_args())
@@ -153,13 +176,11 @@ class ModelConfig(object):
             self.save_rel_recall = os.path.join(ROOT_PATH, self.save_rel_recall)
         else:
             self.save_rel_recall = None
-        
 
         assert self.val_size >= 0
 
         if self.mode not in MODES:
             raise ValueError("Invalid mode: mode must be in {}".format(MODES))
-
 
         if self.ckpt is not None and not os.path.exists(self.ckpt):
             raise ValueError("Ckpt file ({}) doesnt exist".format(self.ckpt))

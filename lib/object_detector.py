@@ -1,22 +1,23 @@
+from os import environ as os_environ
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.parallel
 from torch.autograd import Variable
 from torch.nn import functional as F
+from torch.nn.parallel import replicate, parallel_apply
+from torch.nn.parallel._functions import Gather
 
 from config import ANCHOR_SIZE, ANCHOR_RATIOS, ANCHOR_SCALES
 from lib.fpn.generate_anchors import generate_anchors
 from lib.fpn.box_utils import bbox_preds, center_size, bbox_overlaps
-from lib.fpn.nms.functions.nms import apply_nms
+from torchvision.ops import nms, roi_align
 from lib.fpn.proposal_assignments.proposal_assignments_gtbox import proposal_assignments_gtbox
 from lib.fpn.proposal_assignments.proposal_assignments_det import proposal_assignments_det
 
-from lib.fpn.roi_align.functions.roi_align import RoIAlignFunction
+from torchvision.ops import roi_align
 from lib.pytorch_misc import enumerate_by_image, gather_nd, diagonal_inds, Flattener
 from torchvision.models.vgg import vgg16
 from torchvision.models.resnet import resnet101
-from torch.nn.parallel._functions import Gather
 
 
 class Result(object):
@@ -69,6 +70,8 @@ class ObjectDetector(nn.Module):
 
         self.classes = classes
         self.num_gpus = num_gpus
+        self.devices = [int(x) for x in os_environ['CUDA_VISIBLE_DEVICES'].split(',')]
+        assert self.num_gpus == len(self.devices)
         self.pooling_size = 7
         self.nms_filter_duplicates = nms_filter_duplicates
         self.max_per_img = max_per_img
@@ -133,8 +136,11 @@ class ObjectDetector(nn.Module):
         :param rois: [num_rois, 5] array of [img_num, x0, y0, x1, y1].
         :return: [num_rois, #dim] array
         """
-        feature_pool = RoIAlignFunction(self.pooling_size, self.pooling_size, spatial_scale=1 / 16)(
-            self.compress(features) if self.use_resnet else features, rois)
+        feature_pool = roi_align(self.compress(features) if self.use_resnet else features,
+                                 rois, output_size=[self.pooling_size, self.pooling_size], spatial_scale=1/16)
+        # feature_pool = RoIAlignFunction(self.pooling_size, self.pooling_size, spatial_scale=1 / 16)(
+        #     self.compress(features) if self.use_resnet else features, rois)
+        # print('object_detector.ObjectDetector.obj_feature_map: feature_pool.size() =', feature_pool.size(), 'self.pooling_size =', self.pooling_size, 'features.size() =', features.size(), 'rois.size() =', rois.size())
         return self.roi_fmap(feature_pool.view(rois.size(0), -1))
 
     def rpn_boxes(self, fmap, im_sizes, image_offset, gt_boxes=None, gt_classes=None, gt_rels=None,
@@ -194,6 +200,7 @@ class ObjectDetector(nn.Module):
             rel_labels = None
             rpn_box_deltas = None
             rpn_scores = None
+        #import pdb; pdb.set_trace()
 
         return all_rois, labels, bbox_targets, rpn_scores, rpn_box_deltas, rel_labels
 
@@ -290,12 +297,13 @@ class ObjectDetector(nn.Module):
         :return: If train:
         """
         fmap = self.feature_map(x)
-
+        #import pdb; pdb.set_trace()
         # Get boxes from RPN
         rois, obj_labels, bbox_targets, rpn_scores, rpn_box_deltas, rel_labels = \
             self.get_boxes(fmap, im_sizes, image_offset, gt_boxes,
                            gt_classes, gt_rels, train_anchor_inds, proposals=proposals)
 
+        #import pdb; pdb.set_trace()
         # Now classify them
         obj_fmap = self.obj_feature_map(fmap, rois)
         od_obj_dists = self.score_fc(obj_fmap)
@@ -337,6 +345,8 @@ class ObjectDetector(nn.Module):
             box_deltas = od_box_deltas
             obj_dists = od_obj_dists
 
+        #import pdb; pdb.set_trace()
+
         return Result(
             od_obj_dists=od_obj_dists,
             rm_obj_dists=obj_dists,
@@ -376,6 +386,7 @@ class ObjectDetector(nn.Module):
         """
         # Now produce the boxes
         # box deltas is (num_rois, num_classes, 4) but rois is only #(num_rois, 4)
+        #import pdb; pdb.set_trace()
         boxes = bbox_preds(rois[:, None, 1:].expand_as(box_deltas).contiguous().view(-1, 4),
                            box_deltas.view(-1, 4)).view(*box_deltas.size())
 
@@ -396,6 +407,7 @@ class ObjectDetector(nn.Module):
             )
             if d_filtered is not None:
                 dets.append(d_filtered)
+            #import pdb; pdb.set_trace()
 
         if len(dets) == 0:
             print("nothing was detected", flush=True)
@@ -405,6 +417,7 @@ class ObjectDetector(nn.Module):
         nms_boxes_assign = boxes.view(-1, 4)[twod_inds]
 
         nms_boxes = torch.cat((rois[:, 1:][nms_inds][:, None], boxes[nms_inds][:, 1:]), 1)
+        #import pdb; pdb.set_trace()
         return nms_inds, nms_scores, nms_labels, nms_boxes_assign, nms_boxes, inds[nms_inds]
 
     def __getitem__(self, batch):
@@ -413,8 +426,8 @@ class ObjectDetector(nn.Module):
         if self.num_gpus == 1:
             return self(*batch[0])
 
-        replicas = nn.parallel.replicate(self, devices=list(range(self.num_gpus)))
-        outputs = nn.parallel.parallel_apply(replicas, [batch[i] for i in range(self.num_gpus)])
+        replicas = replicate(self, devices=self.devices)
+        outputs = parallel_apply(replicas, [batch[i] for i in range(self.num_gpus)])
 
         if any([x.is_none() for x in outputs]):
             assert not self.training
@@ -446,9 +459,11 @@ def filter_det(scores, boxes, start_ind=0, max_per_img=100, thresh=0.001, pre_nm
         scores_ci = scores.data[:, c_i]
         boxes_ci = boxes.data[:, c_i]
 
-        keep = apply_nms(scores_ci, boxes_ci,
-                         pre_nms_topn=pre_nms_topn, post_nms_topn=post_nms_topn,
-                         nms_thresh=nms_thresh)
+
+        keep = nms(boxes=boxes_ci, scores=scores_ci, iou_threshold=0.3)
+        # keep = apply_nms(scores_ci, boxes_ci,
+        #                  pre_nms_topn=pre_nms_topn, post_nms_topn=post_nms_topn,
+        #                  nms_thresh=nms_thresh)
         nms_mask[:, c_i][keep] = 1
 
     dists_all = Variable(nms_mask * scores.data, volatile=True)
@@ -598,14 +613,18 @@ class RPNHead(nn.Module):
 
 
 def filter_roi_proposals(box_preds, class_preds, boxes_per_im, nms_thresh=0.7, pre_nms_topn=12000, post_nms_topn=2000):
-    inds, im_per = apply_nms(
-        class_preds,
-        box_preds,
-        pre_nms_topn=pre_nms_topn,
-        post_nms_topn=post_nms_topn,
-        boxes_per_im=boxes_per_im,
-        nms_thresh=nms_thresh,
-    )
+    if box_preds.dim() == 2:
+        inds = nms(boxes=box_preds, scores=class_preds, iou_threshold=nms_thresh)
+        im_per = [inds.size(0)]
+
+    #inds, im_per = nms(
+    #    class_preds,
+    #    box_preds,
+    #    pre_nms_topn=pre_nms_topn,
+    #   post_nms_topn=post_nms_topn,
+    #    boxes_per_im=boxes_per_im,
+     #   nms_thresh=nms_thresh,
+    #)
     img_inds = torch.cat([val * torch.ones(i) for val, i in enumerate(im_per)], 0).cuda(
         box_preds.get_device())
     rois = torch.cat((img_inds[:, None], box_preds[inds]), 1)
